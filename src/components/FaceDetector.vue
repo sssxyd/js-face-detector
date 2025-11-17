@@ -314,9 +314,9 @@ async function handleFaceDetection(result, ctx) {
   }
   
   // Check if face is frontal
-  if (frontalConfidence < 70) {
+  if (frontalConfidence < 85) {
     statusTitle.value = '请正对摄像头'
-    statusMessage.value = '请保持面部正对摄像头'
+    statusMessage.value = '请保持面部正对摄像头，不要转头或抬头低头'
     detectionSuccess.value = false
     drawFaces(ctx, faces, 'orange')
     return
@@ -409,20 +409,36 @@ function checkFaceFrontal(face) {
   const pitchDiff = Math.abs(angle.pitch || 0)
   const rollDiff = Math.abs(angle.roll || 0)
   
-  // Max acceptable deviation (in degrees) - stricter thresholds
-  const maxYaw = 15    // More strict for left-right movement
-  const maxPitch = 15  // More strict for up-down movement
-  const maxRoll = 10   // More strict for tilt
+  // Very strict thresholds for accurate frontal detection
+  // These are designed to capture only true frontal faces
+  const yawThreshold = 8      // Allow only ±8 degrees left-right
+  const pitchThreshold = 8    // Allow only ±8 degrees up-down
+  const rollThreshold = 5     // Allow only ±5 degrees tilt
   
-  // Use exponential decay for more accurate penalization
-  // This means even small deviations reduce confidence more significantly
-  const yawScore = Math.max(0, 100 * Math.pow(0.95, yawDiff))
-  const pitchScore = Math.max(0, 100 * Math.pow(0.95, pitchDiff))
-  const rollScore = Math.max(0, 100 * Math.pow(0.93, rollDiff))
+  // Penalty-based scoring - starts from 100 and decreases with deviation
+  // Using aggressive exponential decay for strictness
+  let yawScore = 100
+  let pitchScore = 100
+  let rollScore = 100
   
-  // Weighted average - yaw (side-to-side) is most important for frontal detection
-  // Weight: yaw 50%, pitch 30%, roll 20%
-  const frontalConfidence = (yawScore * 0.5 + pitchScore * 0.3 + rollScore * 0.2)
+  // Yaw penalty (left-right is most critical for frontal)
+  if (yawDiff > yawThreshold) {
+    yawScore = Math.max(0, 100 * Math.pow(0.92, yawDiff - yawThreshold))
+  }
+  
+  // Pitch penalty (up-down)
+  if (pitchDiff > pitchThreshold) {
+    pitchScore = Math.max(0, 100 * Math.pow(0.92, pitchDiff - pitchThreshold))
+  }
+  
+  // Roll penalty (tilt)
+  if (rollDiff > rollThreshold) {
+    rollScore = Math.max(0, 100 * Math.pow(0.90, rollDiff - rollThreshold))
+  }
+  
+  // Stricter weighted average - yaw is most important
+  // Weight: yaw 60%, pitch 25%, roll 15%
+  const frontalConfidence = (yawScore * 0.6 + pitchScore * 0.25 + rollScore * 0.15)
   
   return frontalConfidence
 }
