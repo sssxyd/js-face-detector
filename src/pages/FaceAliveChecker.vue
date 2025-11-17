@@ -5,10 +5,30 @@
       <p>请完成以下动作验证您是真人</p>
     </div>
 
+    <div class="control-panel">
+      <button 
+        v-if="!isDetecting" 
+        @click="startDetection"
+        class="btn-primary"
+      >
+        开始验证
+      </button>
+      <button 
+        v-else 
+        @click="stopDetection"
+        class="btn-danger"
+      >
+        停止验证
+      </button>
+    </div>
+
     <FaceDetector
       ref="faceDetectorRef"
       mode="liveness"
       :liveness-checks="livenessChecks"
+      :min-face-ratio="minFaceRatio"
+      :max-face-ratio="maxFaceRatio"
+      :min-frontal="minFrontal"
       @face-detected="handleFaceDetected"
       @liveness-action="handleLivenessAction"
       @liveness-completed="handleLivenessCompleted"
@@ -17,10 +37,43 @@
 
     <div class="info-panel">
       <h3>检测信息</h3>
-      <p v-if="faceInfo">
-        人脸大小: {{ faceInfo.size }}% | 正面置信度: {{ faceInfo.frontal }}%
-      </p>
-      <p v-else>等待人脸检测中...</p>
+      <div v-if="faceInfo" class="face-info-detail">
+        <div class="info-row">
+          <span class="label">人脸数量:</span>
+          <span class="value" :class="faceInfo.count === 1 ? 'success' : 'warning'">
+            {{ faceInfo.count }}
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="label">人脸画面占比:</span>
+          <span class="value">{{ faceInfo.size }}%</span>
+          <span class="progress-bar">
+            <span class="progress-fill" :style="{ width: Math.min(faceInfo.size, 100) + '%' }"></span>
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="label">正脸置信度:</span>
+          <span class="value" :class="faceInfo.frontal >= minFrontal ? 'success' : 'warning'">
+            {{ faceInfo.frontal }}%
+          </span>
+          <span class="progress-bar">
+            <span class="progress-fill" :style="{ width: faceInfo.frontal + '%' }"></span>
+          </span>
+        </div>
+        <div v-if="isDetecting && faceInfo.frontal < minFrontal" class="hint-text">
+          💡 请将脸正对摄像头
+        </div>
+        <div v-if="isDetecting && faceInfo.size < minFaceRatio" class="hint-text">
+          💡 请靠近摄像头（目标：{{ minFaceRatio }}%-{{ maxFaceRatio }}%）
+        </div>
+        <div v-if="isDetecting && faceInfo.size > maxFaceRatio" class="hint-text">
+          💡 请远离摄像头（目标：{{ minFaceRatio }}%-{{ maxFaceRatio }}%）
+        </div>
+        <div v-if="isDetecting && faceInfo.size >= minFaceRatio && faceInfo.size <= maxFaceRatio && faceInfo.frontal >= minFrontal" class="hint-text success-hint">
+          ✓ 完美！准备验证中...
+        </div>
+      </div>
+      <p v-else>等待开始验证...</p>
     </div>
 
     <div class="actions-panel">
@@ -46,7 +99,14 @@
 
     <div v-if="verifiedImage" class="result-panel">
       <h3>验证成功</h3>
-      <img :src="verifiedImage" alt="Verified Face" />
+      <div class="image-container">
+        <img 
+          :src="verifiedImage" 
+          alt="Verified Face"
+          loading="lazy"
+          @error="handleImageError"
+        />
+      </div>
       <button @click="resetVerification">重新验证</button>
     </div>
 
@@ -70,6 +130,10 @@ const verifiedImage = ref(null)
 const errorMessage = ref(null)
 const completedActions = ref([])
 const currentAction = ref(null)
+const isDetecting = ref(false)
+const minFaceRatio = ref(50)
+const maxFaceRatio = ref(80)
+const minFrontal = ref(90)
 
 function getActionLabel(action) {
   const labels = {
@@ -98,11 +162,30 @@ function handleLivenessAction(data) {
 
 function handleLivenessCompleted(data) {
   verifiedImage.value = data.imageData
+  isDetecting.value = false
   console.log('Liveness verification completed!', data.faceBox)
 }
 
 function handleError(error) {
   errorMessage.value = error.message
+  isDetecting.value = false
+}
+
+function startDetection() {
+  isDetecting.value = true
+  errorMessage.value = null
+  completedActions.value = []
+  currentAction.value = livenessChecks.value.length > 0 ? livenessChecks.value[0] : null
+  faceDetectorRef.value?.startDetection().catch(err => {
+    console.error('Failed to start detection:', err)
+    errorMessage.value = '启动检测失败: ' + err.message
+    isDetecting.value = false
+  })
+}
+
+function stopDetection() {
+  isDetecting.value = false
+  faceDetectorRef.value?.stopDetection()
 }
 
 function resetVerification() {
@@ -111,17 +194,13 @@ function resetVerification() {
   errorMessage.value = null
   completedActions.value = []
   currentAction.value = null
-  faceDetectorRef.value?.startDetection()
+  isDetecting.value = false
 }
 
-// Start detection on mount
-import { onMounted } from 'vue'
-onMounted(() => {
-  if (livenessChecks.value.length > 0) {
-    currentAction.value = livenessChecks.value[0]
-  }
-  faceDetectorRef.value?.startDetection()
-})
+function handleImageError(error) {
+  console.error('[FaceAliveChecker] Image loading error:', error)
+  errorMessage.value = '图片加载失败'
+}
 </script>
 
 <style scoped>
@@ -148,6 +227,44 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.control-panel {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+  gap: 10px;
+}
+
+.btn-primary,
+.btn-danger {
+  padding: 12px 30px;
+  font-size: 16px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.btn-primary {
+  background-color: #42b983;
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: #358f6b;
+  box-shadow: 0 2px 8px rgba(66, 185, 131, 0.3);
+}
+
+.btn-danger {
+  background-color: #f56c6c;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #dd001b;
+  box-shadow: 0 2px 8px rgba(245, 108, 108, 0.3);
+}
+
 .info-panel {
   margin-top: 20px;
   padding: 15px;
@@ -157,9 +274,90 @@ onMounted(() => {
 }
 
 .info-panel h3 {
-  margin: 0 0 10px 0;
+  margin: 0 0 15px 0;
   font-size: 16px;
   color: #333;
+}
+
+.face-info-detail {
+  text-align: left;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background-color: #fff;
+  border-radius: 5px;
+  flex-wrap: wrap;
+}
+
+.info-row .label {
+  font-weight: 500;
+  color: #555;
+  min-width: 100px;
+}
+
+.info-row .value {
+  font-weight: 600;
+  color: #333;
+  min-width: 60px;
+  text-align: right;
+}
+
+.info-row .value.success {
+  color: #42b983;
+}
+
+.info-row .value.warning {
+  color: #f56c6c;
+}
+
+.progress-bar {
+  flex: 1;
+  min-width: 150px;
+  height: 8px;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-left: auto;
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #42b983, #35a372);
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.hint-text {
+  margin-top: 12px;
+  padding: 10px;
+  background-color: #fff3cd;
+  color: #856404;
+  border-left: 4px solid #ffc107;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hint-text.success-hint {
+  background-color: #d4edda;
+  color: #155724;
+  border-left-color: #28a745;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
 
 .info-panel p {
@@ -251,11 +449,25 @@ onMounted(() => {
   color: #155724;
 }
 
-.result-panel img {
-  max-width: 100%;
-  max-height: 400px;
+.image-container {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 15px;
+  background-color: #fff;
   border-radius: 8px;
-  margin-bottom: 15px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.result-panel img {
+  width: 100%;
+  height: auto;
+  max-height: 400px;
+  object-fit: contain;
+  display: block;
 }
 
 .result-panel button {
@@ -309,6 +521,18 @@ onMounted(() => {
   
   .header h1 {
     font-size: 20px;
+  }
+  
+  .control-panel {
+    margin-bottom: 15px;
+  }
+  
+  .btn-primary,
+  .btn-danger {
+    padding: 10px 20px;
+    font-size: 14px;
+    flex: 1;
+    max-width: 150px;
   }
   
   .action-list {

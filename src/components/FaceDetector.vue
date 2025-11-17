@@ -27,7 +27,13 @@ const props = defineProps({
   // 工作模式：'collection'(采集模式) 或 'liveness'(活体检测模式)
   mode: { type: String, default: 'collection' },
   // 活体检测项目数组：可包含 'blink'(眨眼) 和 'shake'(摇头)
-  livenessChecks: { type: Array, default: () => ['blink', 'shake'] }
+  livenessChecks: { type: Array, default: () => ['blink', 'shake'] },
+  // 人脸占画面比例的最小值（百分比）
+  minFaceRatio: { type: Number, default: 50 },
+  // 人脸占画面比例的最大值（百分比）
+  maxFaceRatio: { type: Number, default: 80 },
+  // 正脸置信度的最小值（百分比）
+  minFrontal: { type: Number, default: 90 }
 })
 
 // 定义组件事件
@@ -58,8 +64,8 @@ let videoHeight = ref(480)
 let human = null
 // 摄像头流对象
 let stream = null
-// 动画帧 ID，用于 requestAnimationFrame
-let animationFrameId = null
+// 检测循环的定时器 ID
+let detectionTimeoutId = null
 
 // ===== 活体检测相关变量 =====
 // 上一帧的头部 yaw 角度(左右摇晃)
@@ -77,6 +83,9 @@ let currentLivenessIndex = 0
 // 已完成的活体检测项集合
 let livenessCompleted = new Set()
 
+// 是否正在初始化检测库
+const isInitializing = ref(false)
+
 // ===== 生命周期钩子 =====
 // 组件挂载时初始化
 onMounted(async () => {
@@ -85,13 +94,14 @@ onMounted(async () => {
   window.addEventListener('orientationchange', handleOrientationChange)
   
   // 配置 Human 检测库
+  isInitializing.value = true
   const config = {
     // 模型文件 CDN 路径
     modelBasePath: 'https://cdn.jsdelivr.net/npm/@vladmandic/human/models',
     // 人脸检测配置
     face: {
       enabled: true,
-      detector: { rotation: false },
+      detector: { rotation: false, return: true },
       mesh: { enabled: true },      // 面部网格点
       iris: { enabled: true }       // 虹膜检测
     },
@@ -101,7 +111,13 @@ onMounted(async () => {
     gesture: { enabled: true }     // 启用手势检测(包含眨眼)
   }
   human = new Human(config)
-  await human.load()
+  try {
+    await human.load()
+    console.log('Human library loaded successfully')
+  } catch (e) {
+    console.error('Failed to load Human library:', e)
+  }
+  isInitializing.value = false
 })
 
 // 组件卸载时清理资源
@@ -158,22 +174,54 @@ const orientationLabel = computed(() => isPortrait.value ? '竖屏' : '横屏')
  */
 async function startDetection() {
   try {
+    // 检查 Human 库是否已初始化
+    if (!human) {
+      emit('error', { message: '检测库未初始化' })
+      return
+    }
+    
+    console.log('[FaceDetector] Starting detection...')
+    
     // 获取用户摄像头权限和视频流
+    console.log('[FaceDetector] Requesting camera access...')
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user' },
+      video: { facingMode: 'user', width: { ideal: videoWidth.value }, height: { ideal: videoHeight.value } },
       audio: false
     })
-    videoRef.value.srcObject = stream
-    await videoRef.value.play()
     
+    console.log('[FaceDetector] Camera stream obtained')
+    videoRef.value.srcObject = stream
+    
+    // 等待视频元素加载元数据和可播放
+    console.log('[FaceDetector] Waiting for video to be ready...')
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Video loading timeout'))
+      }, 5000)
+      
+      const onCanPlay = () => {
+        clearTimeout(timeout)
+        videoRef.value.removeEventListener('canplay', onCanPlay)
+        resolve()
+      }
+      
+      videoRef.value.addEventListener('canplay', onCanPlay)
+      videoRef.value.play().catch(reject)
+    })
+    
+    console.log('[FaceDetector] Video is ready, starting detection loop...')
+    
+    // 标记为正在检测
     isDetecting.value = true
     currentLivenessIndex = 0
     livenessCompleted.clear()
     
-    // 开始检测循环
+    // 立即启动检测循环
     detect()
   } catch (e) {
     // 若获取摄像头失败，触发错误事件
+    console.error('[FaceDetector] Error:', e)
+    isDetecting.value = false
     emit('error', { message: e.message })
   }
 }
@@ -184,7 +232,7 @@ async function startDetection() {
 function stopDetection() {
   isDetecting.value = false
   
-  if (animationFrameId) cancelAnimationFrame(animationFrameId)
+  if (detectionTimeoutId) clearTimeout(detectionTimeoutId)
   if (stream) stream.getTracks().forEach(t => t.stop())
   if (videoRef.value) videoRef.value.srcObject = null
 }
@@ -196,51 +244,92 @@ function stopDetection() {
 async function detect() {
   if (!isDetecting.value) return
   
-  // 对当前视频帧进行人脸检测
-  const result = await human.detect(videoRef.value)
-  
-  // 获取画布上下文并清空
-  const ctx = canvasRef.value.getContext('2d')
-  ctx.clearRect(0, 0, videoWidth.value, videoHeight.value)
-  
-  // 获取检测到的所有人脸
-  const faces = result.face || []
-  
-  if (faces.length === 1) {
-    const face = faces[0]
-    const faceBox = face.box || face.boxRaw
+  try {
+    // 快速检查必需的对象
+    if (!videoRef.value || !canvasRef.value || !human) {
+      console.warn('[FaceDetector] Missing required objects, retrying...')
+      setTimeout(detect, 100)
+      return
+    }
     
-    // 计算人脸占视频画面的比例 (%)
-    const faceRatio = (faceBox[2] * faceBox[3]) / (videoWidth.value * videoHeight.value) * 100
+    // 对当前视频帧进行人脸检测
+    console.log('[FaceDetector] Running detection...')
+    const result = await human.detect(videoRef.value)
+    console.log('[FaceDetector] Detection result:', result.face?.length || 0, 'faces')
     
-    // 检查人脸是否正对摄像头 (0-100 分数)
-    const frontal = checkFaceFrontal(face)
+    // 获取画布上下文并清空
+    const ctx = canvasRef.value.getContext('2d')
+    if (!ctx) {
+      console.error('[FaceDetector] Failed to get canvas context')
+      setTimeout(detect, 100)
+      return
+    }
+    ctx.clearRect(0, 0, videoWidth.value, videoHeight.value)
     
-    // 人脸信息
-    const faceInfo = { size: faceRatio.toFixed(1), frontal: frontal.toFixed(1) }
+    // 获取检测到的所有人脸
+    const faces = result.face || []
     
-    // 判断人脸是否符合条件：大小在 15%-70% 之间，且正对度 >= 85%
-    if (faceRatio > 15 && faceRatio < 70 && frontal >= 85) {
-      emit('face-detected', { faceInfo })
-      drawFaces(ctx, faces, 'green')
+    if (faces.length === 1) {
+      const face = faces[0]
+      const faceBox = face.box || face.boxRaw
       
-      if (props.mode === 'collection') {
-        // 采集模式：检测到合格人脸后停止并返回图片
-        stopDetection()
-        emit('face-collected', { imageData: captureFrame(), faceBox })
+      if (!faceBox) {
+        // 继续检测
+        setTimeout(detect, 100)
+        return
+      }
+      
+      // 计算人脸占视频画面的比例 (%)
+      const faceRatio = (faceBox[2] * faceBox[3]) / (videoWidth.value * videoHeight.value) * 100
+      
+      // 检查人脸是否正对摄像头 (0-100 分数)
+      const frontal = checkFaceFrontal(face)
+      
+      // 人脸信息
+      const faceInfo = { 
+        count: 1,
+        size: faceRatio.toFixed(1), 
+        frontal: frontal.toFixed(1)
+      }
+      
+      // 触发 face-detected 事件
+      emit('face-detected', { faceInfo })
+      
+      // 判断人脸是否符合条件：大小在范围内，且正对度符合要求
+      if (faceRatio > props.minFaceRatio && faceRatio < props.maxFaceRatio && frontal >= props.minFrontal) {
+        console.log('[FaceDetector] Valid face detected, drawing green')
+        drawFaces(ctx, faces, 'green')
+        
+        if (props.mode === 'collection') {
+          // 采集模式：检测到合格人脸后裁切、停止并返回图片
+          const croppedImageData = captureFaceFrame(faceBox)
+          stopDetection()
+          emit('face-collected', { imageData: croppedImageData, faceBox })
+        } else {
+          // 活体检测模式：进行活体验证，第一次会自动 emit face-collected 作为基准图
+          verifyLiveness(face, result.gesture, faceBox)
+        }
       } else {
-        // 活体检测模式：进行活体验证
-        verifyLiveness(face, result.gesture)
+        // 人脸不符合条件，继续检测
+        console.log('[FaceDetector] Face not valid, ratio:', faceRatio, 'frontal:', frontal)
+        drawFaces(ctx, faces, 'orange')
+        setTimeout(detect, 100)
       }
     } else {
-      // 人脸不符合条件，继续检测
+      // 未检测到人脸或检测到多个人脸，继续检测
+      console.log('[FaceDetector] Face count:', faces.length)
+      const faceInfo = { 
+        count: faces.length,
+        size: '0',
+        frontal: '0'
+      }
       emit('face-detected', { faceInfo })
-      drawFaces(ctx, faces, 'orange')
-      animationFrameId = requestAnimationFrame(detect)
+      setTimeout(detect, 100)
     }
-  } else {
-    // 未检测到人脸或检测到多个人脸，继续检测
-    animationFrameId = requestAnimationFrame(detect)
+  } catch (error) {
+    console.error('[FaceDetector] Detection error:', error)
+    // 发生错误时继续检测
+    setTimeout(detect, 200)
   }
 }
 
@@ -271,10 +360,19 @@ function checkFaceFrontal(face) {
  * 活体检测验证：检测用户是否执行指定的活体动作
  * @param {Object} face - 人脸检测结果
  * @param {Array} gestures - 检测到的手势/表情
+ * @param {Array} faceBox - 人脸边界框
  */
-function verifyLiveness(face, gestures) {
+function verifyLiveness(face, gestures, faceBox) {
+  // 如果是第一次检测到符合条件的人脸，先 emit face-collected（基准图）
+  if (currentLivenessIndex === 0 && livenessCompleted.size === 0) {
+    console.log('[FaceDetector] First valid face detected in liveness mode, emitting face-collected')
+    const croppedImageData = captureFaceFrame(faceBox)
+    emit('face-collected', { imageData: croppedImageData, faceBox })
+  }
+  
   // 如果所有活体检测项都已完成
   if (currentLivenessIndex >= props.livenessChecks.length) {
+    console.log('[FaceDetector] All liveness checks completed')
     stopDetection()
     emit('liveness-completed', { imageData: captureFrame(), faceBox: face.box })
     return
@@ -312,7 +410,9 @@ function verifyLiveness(face, gestures) {
   
   // 如果检测到活体动作
   if (detected) {
+    console.log('[FaceDetector] Liveness action detected:', action)
     emit('liveness-action', { action, status: 'completed' })
+    livenessCompleted.add(action)
     currentLivenessIndex++
     
     // 重置摇头检测的相关变量
@@ -322,7 +422,7 @@ function verifyLiveness(face, gestures) {
   }
   
   // 继续检测下一帧
-  animationFrameId = requestAnimationFrame(detect)
+  setTimeout(detect, 100)
 }
 
 // ===== 工具方法 =====
@@ -331,15 +431,63 @@ function verifyLiveness(face, gestures) {
  * @returns {string} Base64 格式的 JPEG 图片数据
  */
 function captureFrame() {
-  const c = document.createElement('canvas')
-  c.width = videoWidth.value
-  c.height = videoHeight.value
-  c.getContext('2d').drawImage(videoRef.value, 0, 0, videoWidth.value, videoHeight.value)
-  return c.toDataURL('image/jpeg', 0.95)
+  try {
+    const c = document.createElement('canvas')
+    c.width = videoRef.value.videoWidth || videoWidth.value
+    c.height = videoRef.value.videoHeight || videoHeight.value
+    
+    const ctx = c.getContext('2d')
+    ctx.drawImage(videoRef.value, 0, 0, c.width, c.height)
+    
+    const imageData = c.toDataURL('image/jpeg', 0.9)
+    console.log('[FaceDetector] Frame captured, size:', imageData.length)
+    return imageData
+  } catch (e) {
+    console.error('[FaceDetector] Failed to capture frame:', e)
+    return null
+  }
 }
 
 /**
- * 在画布上绘制人脸检测框（内切圆形式）
+ * 根据人脸区域裁切当前视频帧并转换为 JPEG 图片
+ * @param {Array} faceBox - 人脸边界框 [x, y, width, height]
+ * @returns {string} Base64 格式的 JPEG 图片数据（只包含人脸区域）
+ */
+function captureFaceFrame(faceBox) {
+  try {
+    if (!faceBox) {
+      console.warn('[FaceDetector] Invalid faceBox, using full frame')
+      return captureFrame()
+    }
+
+    const [x, y, width, height] = faceBox
+    
+    // 创建裁切后的 canvas
+    const c = document.createElement('canvas')
+    c.width = width
+    c.height = height
+    
+    const ctx = c.getContext('2d')
+    
+    // 从视频中裁切人脸区域
+    ctx.drawImage(
+      videoRef.value,
+      x, y, width, height,      // 源区域（视频中的人脸位置）
+      0, 0, width, height        // 目标区域（canvas）
+    )
+    
+    const croppedImageData = c.toDataURL('image/jpeg', 0.9)
+    console.log('[FaceDetector] Face frame captured and cropped, size:', croppedImageData.length, 'box:', faceBox)
+    return croppedImageData
+  } catch (e) {
+    console.error('[FaceDetector] Failed to capture face frame:', e)
+    // 降级：返回完整帧
+    return captureFrame()
+  }
+}
+
+/**
+ * 在画布上绘制人脸检测框（正方形）
  * @param {CanvasRenderingContext2D} ctx - 画布上下文
  * @param {Array} faces - 人脸数组
  * @param {string} color - 检测框颜色
@@ -354,19 +502,10 @@ function drawFaces(ctx, faces, color) {
       const width = box[2]
       const height = box[3]
       
-      // 计算圆心（正方形中心）
-      const centerX = x + width / 2
-      const centerY = y + height / 2
-      
-      // 计算半径（取正方形边长的一半）
-      const radius = Math.min(width, height) / 2
-      
-      // 绘制内切圆
+      // 绘制矩形框
       ctx.strokeStyle = color
       ctx.lineWidth = 3
-      ctx.beginPath()
-      ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI)
-      ctx.stroke()
+      ctx.strokeRect(x, y, width, height)
     }
   })
 }
