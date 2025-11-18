@@ -39,6 +39,7 @@
 
     <div class="info-panel">
       <h3>检测信息</h3>
+      <div v-if="actionMessage" class="action-message">{{ actionMessage }}</div>
       <div v-if="faceInfo" class="face-info-detail">
         <div class="info-row">
           <span class="label">人脸数量:</span>
@@ -78,27 +79,6 @@
       <p v-else>等待开始验证...</p>
     </div>
 
-    <div class="actions-panel">
-      <h3>需要完成的动作</h3>
-      <div class="action-list">
-        <div
-          v-for="action in livenessChecks"
-          :key="action"
-          class="action-item"
-          :class="{ completed: completedActions.includes(action) }"
-        >
-          <span class="action-name">{{ getActionLabel(action) }}</span>
-          <span v-if="completedActions.includes(action)" class="status-completed">✓ 已完成</span>
-          <span v-else class="status-pending">待完成</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="current-action-panel" v-if="currentAction">
-      <h4>请{{ getActionLabel(currentAction) }}</h4>
-      <p>正在检测中...</p>
-    </div>
-
     <div v-if="verifiedImage" class="result-panel">
       <h3>验证成功</h3>
       <div class="image-container">
@@ -122,15 +102,16 @@
 <script setup lang="ts">
 import { ref, Ref } from 'vue'
 import FaceDetector from '../components/FaceDetector.vue'
-import { LivenessAction, type FaceInfo } from '../components/face-detector'
+import { LivenessAction, LivenessActionStatus, type FaceInfo } from '../components/face-detector'
 
 // Configurable liveness checks
-const livenessChecks: Ref<string[]> = ref([LivenessAction.BLINK, LivenessAction.MOUTH_OPEN, LivenessAction.NOD])
+const livenessChecks: Ref<LivenessAction[]> = ref([LivenessAction.BLINK, LivenessAction.MOUTH_OPEN, LivenessAction.NOD])
 
 const faceDetectorRef: Ref<any> = ref(null)
 const faceInfo: Ref<FaceInfo | null> = ref(null)
 const verifiedImage: Ref<string | null> = ref(null)
 const errorMessage: Ref<string | null> = ref(null)
+const actionMessage: Ref<string | null> = ref(null)
 const completedActions: Ref<string[]> = ref([])
 const currentAction: Ref<string | null> = ref(null)
 const isDetecting: Ref<boolean> = ref(false)
@@ -140,21 +121,20 @@ const minFrontal: Ref<number> = ref(90)
 const livenessActionCount: Ref<number> = ref(1)      // 活体检测动作次数
 const livenessActionTimeout: Ref<number> = ref(60)   // 活体检测动作时间限制（秒）
 
-function getActionLabel(action: string): string {
-  const labels: Record<string, string> = {
-    [LivenessAction.BLINK]: '眨眼',
-    [LivenessAction.MOUTH_OPEN]: '张嘴',
-    [LivenessAction.NOD]: '点头'
-  }
-  return labels[action] || action
-}
-
 function handleFaceDetected(data: { faceInfo: FaceInfo }): void {
   faceInfo.value = data.faceInfo
 }
 
-function handleLivenessAction(data: { action: string; status: string }): void {
-  if (data.status === 'completed') {
+function handleLivenessAction(data: { action: LivenessAction; description: string; status: LivenessActionStatus }): void {
+  const statusMap: Record<string, string> = {
+    [LivenessActionStatus.STARTED]: `开始检测：${data.description}`,
+    [LivenessActionStatus.COMPLETED]: `✓ ${data.description}已完成`,
+    [LivenessActionStatus.TIMEOUT]: `✗ ${data.description}超时失败`
+  }
+  
+  actionMessage.value = statusMap[data.status] || `${data.description} (${data.status})`
+  
+  if (data.status === LivenessActionStatus.COMPLETED) {
     if (!completedActions.value.includes(data.action)) {
       completedActions.value.push(data.action)
     }
@@ -200,6 +180,7 @@ function resetVerification(): void {
   verifiedImage.value = null
   faceInfo.value = null
   errorMessage.value = null
+  actionMessage.value = null
   completedActions.value = []
   currentAction.value = null
   isDetecting.value = false
@@ -285,6 +266,29 @@ function handleImageError(error: Event): void {
   margin: 0 0 15px 0;
   font-size: 16px;
   color: #333;
+}
+
+.action-message {
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  background-color: #e7f3ff;
+  border-left: 4px solid #007bff;
+  border-radius: 4px;
+  color: #0056b3;
+  font-weight: 500;
+  font-size: 14px;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .face-info-detail {

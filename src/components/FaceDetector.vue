@@ -23,7 +23,7 @@ import { ref, computed, onMounted, onUnmounted, Ref } from 'vue'
 import Human from '@vladmandic/human'
 // 导入类型定义
 import type { FaceInfo, FaceCollectedData, LivenessCompletedData, LivenessActionData, ErrorData, FaceDetectorProps } from './face-detector'
-import { DetectionMode, LivenessAction, ACTION_DESCRIPTIONS } from './face-detector'
+import { DetectionMode, LivenessAction, LivenessActionStatus, ACTION_DESCRIPTIONS, FACE_DETECTOR_EVENTS } from './face-detector'
 
 // 定义组件 props
 const props = withDefaults(defineProps<FaceDetectorProps>(), {
@@ -77,7 +77,7 @@ let detectionTimeoutId: ReturnType<typeof setTimeout> | null = null
 // 当前活体检测项的索引
 let currentLivenessIndex: number = 0
 // 已完成的活体检测项集合
-let livenessCompleted: Set<string> = new Set()
+let livenessCompleted: Set<LivenessAction> = new Set()
 // 暂存的基准图片（在第一次检测到正脸时捕获）
 let baselineFaceData: string | null = null
 // 标记是否已进入活体检测流程（防止人脸切换）
@@ -89,7 +89,7 @@ let silentLivenessStarted: boolean = false
 // 静默活体检测：采集的完整摄像头照片（用于活体检测）
 let silentLivenessCapturedImage: string | null = null
 // 当前随机选择的活体检测动作
-let currentRandomAction: string | null = null
+let currentRandomAction: LivenessAction | null = null
 // 当前动作的完成次数
 let currentActionCompletedCount: number = 0
 // 当前动作的超时定时器
@@ -196,7 +196,7 @@ async function startDetection(): Promise<void> {
   try {
     // 检查 Human 库是否已初始化
     if (!human) {
-      emit('error', { message: '检测库未初始化' })
+      emit(FACE_DETECTOR_EVENTS.ERROR, { message: '检测库未初始化' })
       return
     }
     
@@ -249,7 +249,7 @@ async function startDetection(): Promise<void> {
     // 若获取摄像头失败，触发错误事件
     console.error('[FaceDetector] Error:', e)
     isDetecting.value = false
-    emit('error', { message: (e as Error).message })
+    emit(FACE_DETECTOR_EVENTS.ERROR, { message: (e as Error).message })
   }
 }
 
@@ -340,7 +340,7 @@ async function detect(): Promise<void> {
       }
       
       // 触发 face-detected 事件
-      emit('face-detected', { faceInfo })
+      emit(FACE_DETECTOR_EVENTS.FACE_DETECTED, { faceInfo })
       
       // 判断人脸是否符合条件：大小在范围内，且正对度符合要求
       if (faceRatio > props.minFaceRatio && faceRatio < props.maxFaceRatio && frontal >= props.minFrontal) {
@@ -350,7 +350,7 @@ async function detect(): Promise<void> {
         if (props.mode === 'collection') {
           // 采集模式：检测到合格人脸后裁切、停止并返回图片
           baselineFaceData = captureFaceFrame(faceBox)
-          emit('face-collected', { faceImageData: baselineFaceData })
+          emit(FACE_DETECTOR_EVENTS.FACE_COLLECTED, { faceImageData: baselineFaceData })
           stopDetection()
         } else if (props.mode === 'silent_liveness') {
           // 静默活体检测模式：采集完整摄像头照片，然后进行活体检测
@@ -381,19 +381,19 @@ async function detect(): Promise<void> {
         size: 0,
         frontal: 0
       }
-      emit('face-detected', { faceInfo })
+      emit(FACE_DETECTOR_EVENTS.FACE_DETECTED, { faceInfo })
       
       // 在 LIVENESS 或 SILENT_LIVENESS 模式下，如果已开始活体检测，不能检测不到人脸或多个人脸
       if (props.mode === 'liveness' && livenessStarted && faces.length !== 1) {
         console.error('[FaceDetector] Face count changed during liveness detection, expected 1 but got', faces.length)
-        emit('error', { message: `检测到人脸数量变化，期望1张，实际${faces.length}张。请保持正脸对着摄像头，重新开始检测。` })
+        emit(FACE_DETECTOR_EVENTS.ERROR, { message: `检测到人脸数量变化，期望1张，实际${faces.length}张。请保持正脸对着摄像头，重新开始检测。` })
         stopDetection()
         return
       }
       
       if (props.mode === 'silent_liveness' && silentLivenessStarted && faces.length !== 1) {
         console.error('[FaceDetector] Face count changed during silent liveness detection, expected 1 but got', faces.length)
-        emit('error', { message: `检测到人脸数量变化，期望1张，实际${faces.length}张。请保持正脸对着摄像头，重新开始检测。` })
+        emit(FACE_DETECTOR_EVENTS.ERROR, { message: `检测到人脸数量变化，期望1张，实际${faces.length}张。请保持正脸对着摄像头，重新开始检测。` })
         resetSilentLiveness()
         return
       }
@@ -482,7 +482,7 @@ function checkFaceFrontal(face: any, gestures: any): number {
  */
 function verifyLiveness(gestures: any, faceBox: number[]): void {
   // 如果是第一次检测到符合条件的人脸，先捕获并暂存（不立即emit）
-  if (currentLivenessIndex === 0 && livenessCompleted.size === 0 && !baselineFaceData) {
+    if (currentLivenessIndex === 0 && livenessCompleted.size === 0 && !baselineFaceData) {
     console.log('[FaceDetector] First valid face detected in liveness mode, capturing baseline')
     baselineFaceData = captureFaceFrame(faceBox)
     // 标记活体检测已开始，后续 detect 方法需要检查人脸数量
@@ -492,16 +492,14 @@ function verifyLiveness(gestures: any, faceBox: number[]): void {
     selectNextRandomAction()
   }
   
-  // 检查是否所有动作都已完成
-  if (currentLivenessIndex >= props.livenessChecks.length) {
+  // 检查是否达到动作次数限制
+  if (currentLivenessIndex >= normalizedLivenessActionCount.value) {
     console.log('[FaceDetector] All liveness checks completed')
     // 抛出 liveness-completed 事件
-    emit('liveness-completed', { faceImageData: baselineFaceData, liveness: 1.0 })
+    emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, { faceImageData: baselineFaceData, liveness: 1.0 })
     stopDetection(true)
     return
-  }
-  
-  // 获取当前需要检测的随机动作
+  }  // 获取当前需要检测的随机动作
   if (!currentRandomAction) {
     console.warn('[FaceDetector] No current action selected')
     setTimeout(detect, 100)
@@ -519,7 +517,7 @@ function verifyLiveness(gestures: any, faceBox: number[]): void {
     // 检查是否达到了所需的次数
     if (currentActionCompletedCount >= normalizedLivenessActionCount.value) {
       console.log('[FaceDetector] Liveness action completed:', currentRandomAction)
-      emit('liveness-action', { action: currentRandomAction, status: 'completed' })
+      emit(FACE_DETECTOR_EVENTS.LIVENESS_ACTION, { action: currentRandomAction, description: getActionDescription(currentRandomAction), status: LivenessActionStatus.COMPLETED })
       livenessCompleted.add(currentRandomAction)
       currentLivenessIndex++
       
@@ -559,6 +557,7 @@ function selectNextRandomAction(): void {
   
   // 更新提示文本
   updateActionPrompt(currentRandomAction)
+  emit(FACE_DETECTOR_EVENTS.LIVENESS_ACTION, { action: currentRandomAction, description: getActionDescription(currentRandomAction), status: LivenessActionStatus.STARTED })
   
   console.log('[FaceDetector] Selected action:', currentRandomAction)
   
@@ -566,8 +565,9 @@ function selectNextRandomAction(): void {
   if (actionTimeoutId) clearTimeout(actionTimeoutId)
   actionTimeoutId = setTimeout(() => {
     if (currentRandomAction) {
+      emit(FACE_DETECTOR_EVENTS.LIVENESS_ACTION, { action: currentRandomAction, description: getActionDescription(currentRandomAction), status: LivenessActionStatus.TIMEOUT })
       console.error('[FaceDetector] Action timeout:', currentRandomAction)
-      emit('error', { message: `动作检测超时（${props.livenessActionTimeout}秒）：未在规定时间内检测到${getActionDescription(currentRandomAction)}，请重试` })
+      emit(FACE_DETECTOR_EVENTS.ERROR, { message: `动作检测超时（${props.livenessActionTimeout}秒）：未在规定时间内检测到${getActionDescription(currentRandomAction)}，请重试` })
       stopDetection()
     }
   }, props.livenessActionTimeout * 1000)
@@ -583,7 +583,7 @@ function getActionDescription(action: string): string {
 /**
  * 更新摄像头上的提示文本
  */
-function updateActionPrompt(action: string): void {
+function updateActionPrompt(action: LivenessAction): void {
   const prompt = `请${getActionDescription(action)}`
   actionPromptText.value = prompt
   console.log('[FaceDetector] Prompt updated:', prompt)
@@ -782,13 +782,13 @@ function captureFaceFrame(faceBox: number[]): string | null {
 async function performSilentLivenessDetection(): Promise<void> {
   if (!silentLivenessCapturedImage) {
     console.error('[FaceDetector] No captured image for silent liveness detection')
-    emit('error', { message: '未能捕获图片，请重试' })
+    emit(FACE_DETECTOR_EVENTS.ERROR, { message: '未能捕获图片，请重试' })
     return
   }
 
   if (!human) {
     console.error('[FaceDetector] Human.js not initialized')
-    emit('error', { message: 'AI 检测引擎未初始化，请稍后重试' })
+    emit(FACE_DETECTOR_EVENTS.ERROR, { message: 'AI 检测引擎未初始化，请稍后重试' })
     return
   }
 
@@ -805,7 +805,7 @@ async function performSilentLivenessDetection(): Promise<void> {
         
         if (!result) {
           console.warn('[FaceDetector] Human.js detection returned no result')
-          emit('error', { message: '活体检测失败，无法分析图片，请重试' })
+          emit(FACE_DETECTOR_EVENTS.ERROR, { message: '活体检测失败，无法分析图片，请重试' })
           resetSilentLiveness()
           return
         }
@@ -819,7 +819,7 @@ async function performSilentLivenessDetection(): Promise<void> {
         const faces = result.face || []
         if (faces.length === 0) {
           console.warn('[FaceDetector] No face detected in captured image for liveness check')
-          emit('error', { message: '未在图片中检测到人脸，请确保采集了清晰的人脸照片' })
+          emit(FACE_DETECTOR_EVENTS.ERROR, { message: '未在图片中检测到人脸，请确保采集了清晰的人脸照片' })
           resetSilentLiveness()
           return
         }
@@ -836,7 +836,7 @@ async function performSilentLivenessDetection(): Promise<void> {
 
         if (!Array.isArray(livenessData) || livenessData.length === 0) {
           console.warn('[FaceDetector] No liveness data in detection result')
-          emit('error', { message: '无法获取活体检测结果，请重试' })
+          emit(FACE_DETECTOR_EVENTS.ERROR, { message: '无法获取活体检测结果，请重试' })
           resetSilentLiveness()
           return
         }
@@ -868,7 +868,7 @@ async function performSilentLivenessDetection(): Promise<void> {
           displayCapturedImageOnCanvas()
           
           // 发送成功事件
-          emit('liveness-completed', {
+          emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, {
             faceImageData: silentLivenessCapturedImage,
             liveness: realScore
           })
@@ -876,21 +876,21 @@ async function performSilentLivenessDetection(): Promise<void> {
           stopDetection()
         } else {
           console.warn('[FaceDetector] Liveness detection FAILED, score:', realScore)
-          emit('error', { 
+          emit(FACE_DETECTOR_EVENTS.ERROR, { 
             message: `活体检测失败（得分 ${(realScore * 100).toFixed(1)}%），请确保是真实人脸，重新开始检测` 
           })
           resetSilentLiveness()
         }
       } catch (e) {
         console.error('[FaceDetector] Error during liveness analysis:', e)
-        emit('error', { message: `活体检测出错: ${e instanceof Error ? e.message : '未知错误'}` })
+        emit(FACE_DETECTOR_EVENTS.ERROR, { message: `活体检测出错: ${e instanceof Error ? e.message : '未知错误'}` })
         resetSilentLiveness()
       }
     }
 
     tempImg.onerror = () => {
       console.error('[FaceDetector] Failed to load captured image for liveness detection')
-      emit('error', { message: '无法加载采集的图片进行活体检测' })
+      emit(FACE_DETECTOR_EVENTS.ERROR, { message: '无法加载采集的图片进行活体检测' })
       resetSilentLiveness()
     }
 
@@ -898,7 +898,7 @@ async function performSilentLivenessDetection(): Promise<void> {
     tempImg.src = silentLivenessCapturedImage
   } catch (e) {
     console.error('[FaceDetector] Error in performSilentLivenessDetection:', e)
-    emit('error', { message: `活体检测异常: ${e instanceof Error ? e.message : '未知错误'}` })
+    emit(FACE_DETECTOR_EVENTS.ERROR, { message: `活体检测异常: ${e instanceof Error ? e.message : '未知错误'}` })
     resetSilentLiveness()
   }
 }

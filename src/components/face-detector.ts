@@ -36,13 +36,24 @@ export const ACTION_DESCRIPTIONS: Record<string, string> = {
 }
 
 /**
+ * FaceDetector 组件事件名称常量
+ */
+export const FACE_DETECTOR_EVENTS = Object.freeze({
+  FACE_DETECTED: 'face-detected',
+  FACE_COLLECTED: 'face-collected',
+  LIVENESS_ACTION: 'liveness-action',
+  LIVENESS_COMPLETED: 'liveness-completed',
+  ERROR: 'error'
+})
+
+/**
  * FaceDetector 组件 Props 接口
  */
 export interface FaceDetectorProps {
   // 工作模式：COLLECTION(采集) / LIVENESS(动作活体) / SILENT_LIVENESS(静默活体)
   mode?: DetectionMode | string
   // 活体检测项目数组：可包含 LivenessAction.BLINK(眨眼) 等（仅用于 LIVENESS 模式）
-  livenessChecks?: (LivenessAction | string)[]
+  livenessChecks?: LivenessAction[]
   // 人脸占画面比例的最小值（百分比）
   minFaceRatio?: number
   // 人脸占画面比例的最大值（百分比）
@@ -85,8 +96,26 @@ export interface LivenessCompletedData {
  * 活体检测动作数据
  */
 export interface LivenessActionData {
-    action: string
-    status: string
+    action: LivenessAction
+    description: string
+    status: LivenessActionStatus
+}
+
+export enum LivenessActionStatus {
+  STARTED = 'started',
+  COMPLETED = 'completed',
+  TIMEOUT = 'timeout'
+}
+
+export interface FaceDetectorEvents {
+  // 检测到人脸时触发
+  faceDetected: (data: FaceInfo) => void
+  // 采集完成时触发
+  faceCollected: (data: FaceCollectedData) => void
+  // 活体检测完成时触发
+  livenessCompleted: (data: LivenessCompletedData) => void
+  // 活体检测动作开始时触发
+  livenessActionStarted: (data: LivenessActionData) => void
 }
 
 /**
