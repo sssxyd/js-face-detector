@@ -124,21 +124,65 @@ export enum LivenessActionStatus {
   TIMEOUT = 'timeout'
 }
 
-export interface FaceDetectorEvents {
-  // 检测到人脸时触发
-  faceDetected: (data: FaceInfo) => void
-  // 采集完成时触发
-  faceCollected: (data: FaceCollectedData) => void
-  // 活体检测完成时触发
-  livenessCompleted: (data: LivenessCompletedData) => void
-  // 活体检测动作开始时触发
-  livenessActionStarted: (data: LivenessActionData) => void
+/**
+ * 错误码枚举
+ */
+export enum ErrorCode {
+  // 库初始化失败
+  DETECTOR_NOT_INITIALIZED = 'DETECTOR_NOT_INITIALIZED',
+  // 获取摄像头权限失败
+  CAMERA_ACCESS_DENIED = 'CAMERA_ACCESS_DENIED',
+  // 视频流获取失败
+  STREAM_ACQUISITION_FAILED = 'STREAM_ACQUISITION_FAILED',
+  // 人脸数量变化
+  FACE_COUNT_CHANGED = 'FACE_COUNT_CHANGED',
+  // 活体动作检测超时
+  ACTION_TIMEOUT = 'ACTION_TIMEOUT',
+  // 图片捕获失败
+  CAPTURE_FAILED = 'CAPTURE_FAILED',
+  // AI 引擎未初始化
+  ENGINE_NOT_INITIALIZED = 'ENGINE_NOT_INITIALIZED',
+  // 活体检测分析失败
+  LIVENESS_ANALYSIS_FAILED = 'LIVENESS_ANALYSIS_FAILED',
+  // 采集图片中未检测到人脸
+  NO_FACE_IN_IMAGE = 'NO_FACE_IN_IMAGE',
+  // 无法获取活体检测结果
+  NO_LIVENESS_RESULT = 'NO_LIVENESS_RESULT',
+  // 活体检测失败
+  LIVENESS_DETECTION_FAILED = 'LIVENESS_DETECTION_FAILED',
+  // 活体检测得分不足
+  LIVENESS_SCORE_INSUFFICIENT = 'LIVENESS_SCORE_INSUFFICIENT',
+  // 图片加载失败
+  IMAGE_LOAD_FAILED = 'IMAGE_LOAD_FAILED',
+  // 检测异常
+  DETECTION_ERROR = 'DETECTION_ERROR'
+}
+
+/**
+ * 错误码描述映射表
+ */
+export const ERROR_CODE_DESCRIPTIONS: Record<ErrorCode, string> = {
+  [ErrorCode.DETECTOR_NOT_INITIALIZED]: '检测库未初始化',
+  [ErrorCode.CAMERA_ACCESS_DENIED]: '无权访问摄像头',
+  [ErrorCode.STREAM_ACQUISITION_FAILED]: '获取摄像头流失败',
+  [ErrorCode.FACE_COUNT_CHANGED]: '检测到人脸数量变化',
+  [ErrorCode.ACTION_TIMEOUT]: '活体动作检测超时',
+  [ErrorCode.CAPTURE_FAILED]: '图片捕获失败',
+  [ErrorCode.ENGINE_NOT_INITIALIZED]: 'AI 检测引擎未初始化',
+  [ErrorCode.LIVENESS_ANALYSIS_FAILED]: '活体检测分析失败',
+  [ErrorCode.NO_FACE_IN_IMAGE]: '采集图片中未检测到人脸',
+  [ErrorCode.NO_LIVENESS_RESULT]: '无法获取活体检测结果',
+  [ErrorCode.LIVENESS_DETECTION_FAILED]: '活体检测失败',
+  [ErrorCode.LIVENESS_SCORE_INSUFFICIENT]: '活体检测得分不足',
+  [ErrorCode.IMAGE_LOAD_FAILED]: '图片加载失败',
+  [ErrorCode.DETECTION_ERROR]: '检测异常'
 }
 
 /**
  * 错误数据
  */
 export interface ErrorData {
+  code: ErrorCode
   message: string
 }
 
