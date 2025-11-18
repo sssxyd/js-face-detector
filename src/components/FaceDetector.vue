@@ -528,31 +528,54 @@ function verifyLiveness(gestures: any, faceBox: number[]): void {
     }
     
   } else if (action === LivenessAction.SHAKE && gestures) {
-    // 摇头检测：使用 facing 动作序列判定
-    // 规则：检测到 "facing center" -> "facing left" -> "facing center" 
-    //      或 "facing center" -> "facing right" -> "facing center" 这样的序列
+    // 摇头检测：使用 facing 动作序列判定 + yaw 角度辅助判定
+    // 改进策略：大幅降低灵敏度要求，支持两种检测方式
     
-    // 获取当前帧的 facing 动作
+    // 方式 1：基于 facing gesture 检测（主要方式）
+    // 规则：支持多种摇头模式，只要检测到明显的左右变化即可
     const currentFacing = gestures.find((g: any) => g.gesture?.includes('facing'))?.gesture
     
     if (currentFacing) {
-      // 提取 facing 方向（center/left/right）
       const facingDirection = currentFacing.match(/(center|left|right)/)?.[0]
       
       if (facingDirection && facingDirection !== shakeFacingSequence[shakeFacingSequence.length - 1]) {
-        // 方向改变时，添加到序列中
         shakeFacingSequence.push(facingDirection)
+        console.log('[FaceDetector] Shake sequence:', shakeFacingSequence)
         
-        // 检查是否完成了摇头动作
-        // 检测模式：center -> left -> center 或 center -> right -> center
-        if (shakeFacingSequence.length >= 3) {
+        // 改进的检测模式：支持更灵活的摇头序列
+        if (shakeFacingSequence.length >= 2) {
           const seq = shakeFacingSequence
-          const isShakeLeft = seq[seq.length - 3] === 'center' && seq[seq.length - 2] === 'left' && seq[seq.length - 1] === 'center'
-          const isShakeRight = seq[seq.length - 3] === 'center' && seq[seq.length - 2] === 'right' && seq[seq.length - 1] === 'center'
+          const lastIdx = seq.length - 1
+          const prevIdx = lastIdx - 1
           
-          if (isShakeLeft || isShakeRight) {
+          // 检测模式 1：直接的左右摆动（left <-> right）
+          const isLeftRight = (seq[prevIdx] === 'left' && seq[lastIdx] === 'right') || 
+                              (seq[prevIdx] === 'right' && seq[lastIdx] === 'left')
+          
+          if (isLeftRight) {
+            console.log('[FaceDetector] Shake detected: left-right swing')
             detected = true
-            shakeFacingSequence = [] // 重置序列
+            shakeFacingSequence = []
+          } 
+          // 检测模式 2：带中心的摇头序列（最多 4 帧）
+          else if (shakeFacingSequence.length >= 3) {
+            const isCompleteShake = 
+              // center -> left -> center 或 center -> right -> center
+              (seq[seq.length - 3] === 'center' && (seq[seq.length - 2] === 'left' || seq[seq.length - 2] === 'right') && seq[seq.length - 1] === 'center') ||
+              // left -> center -> left 或 right -> center -> right
+              (seq[seq.length - 3] === 'left' && seq[seq.length - 2] === 'center' && seq[seq.length - 1] === 'left') ||
+              (seq[seq.length - 3] === 'right' && seq[seq.length - 2] === 'center' && seq[seq.length - 1] === 'right')
+            
+            if (isCompleteShake) {
+              console.log('[FaceDetector] Shake detected: complete pattern')
+              detected = true
+              shakeFacingSequence = []
+            }
+          }
+          
+          // 防止序列过长，只保留最近的 6 帧
+          if (shakeFacingSequence.length > 6) {
+            shakeFacingSequence = shakeFacingSequence.slice(-6)
           }
         }
       }

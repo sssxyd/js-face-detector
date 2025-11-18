@@ -143,10 +143,27 @@ async function getRemoteFiles(sftp, remotePath, prefix = '') {
 }
 
 /**
+ * 格式化耗时（毫秒转为人类可读格式）
+ */
+function formatDuration(ms) {
+  if (ms < 1000) {
+    return `${ms.toFixed(0)}ms`;
+  } else if (ms < 60000) {
+    return `${(ms / 1000).toFixed(2)}s`;
+  } else {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(2);
+    return `${minutes}m ${seconds}s`;
+  }
+}
+
+/**
  * 主发布函数
  */
 async function publishViaSFTP() {
   const sftp = new Client();
+  const startTime = Date.now();
+  const stepTimings = {};
 
   try {
     // 检查本地 dist 目录
@@ -194,6 +211,7 @@ async function publishViaSFTP() {
     // 连接到服务器
     log(`\n⏳ 连接到服务器...`, 'blue');
     await sftp.connect(sshConfig);
+    stepTimings.connect = Date.now();
     log(`✓ 连接到服务器 成功`, 'green');
 
     // 创建远程目录
@@ -206,17 +224,20 @@ async function publishViaSFTP() {
         throw error;
       }
     }
+    stepTimings.mkdir = Date.now();
 
     // 获取本地和远程文件列表
     log(`\n⏳ 扫描本地文件...`, 'blue');
     const localFiles = getAllFiles(LOCAL_DIST);
+    stepTimings.scanLocal = Date.now();
     log(`✓ 扫描本地文件 完成 (${localFiles.length} 个文件)`, 'green');
-    localFiles.forEach(f => log(`  • ${f.remote}`, 'cyan'));
+    // localFiles.forEach(f => log(`  • ${f.remote}`, 'cyan'));
 
     log(`\n⏳ 扫描远程文件...`, 'blue');
     const remoteFiles = await getRemoteFiles(sftp, REMOTE_PATH);
+    stepTimings.scanRemote = Date.now();
     log(`✓ 扫描远程文件 完成 (${remoteFiles.length} 个文件)`, 'green');
-    remoteFiles.forEach(f => log(`  • ${f}`, 'cyan'));
+    // remoteFiles.forEach(f => log(`  • ${f}`, 'cyan'));
 
     // 步骤1：将远程所有文件的相对路径放入 Set
     const remotePathSet = new Set(remoteFiles);
@@ -261,6 +282,7 @@ async function publishViaSFTP() {
         throw error;
       }
     }
+    stepTimings.upload = Date.now();
     log(`✓ 上传文件 完成 (${uploadCount} 个文件)`, 'green');
 
     // 步骤3：删除 pathSet 中剩余的文件（服务端存在但本地不存在）
@@ -277,10 +299,14 @@ async function publishViaSFTP() {
         log(`  ⚠️  删除失败: ${remainingPath} - ${error.message}`, 'yellow');
       }
     }
+    stepTimings.delete = Date.now();
     log(`✓ 清理远程文件 完成 (删除 ${deleteCount} 个文件)`, 'green');
 
     // 关闭连接
     await sftp.end();
+
+    const endTime = Date.now();
+    const totalTime = endTime - startTime;
 
     log('\n========================================', 'green');
     log('✓ 发布成功！', 'green');
@@ -289,6 +315,16 @@ async function publishViaSFTP() {
     log(`  上传: ${uploadCount} 个文件`, 'cyan');
     log(`  删除: ${deleteCount} 个文件`, 'cyan');
     log(`  总计: ${localFiles.length} 个文件在服务器上`, 'cyan');
+    
+    log(`\n耗时统计：`, 'cyan');
+    log(`  连接服务器: ${formatDuration(stepTimings.mkdir - startTime)}`, 'cyan');
+    log(`  创建/检查目录: ${formatDuration(stepTimings.scanLocal - stepTimings.mkdir)}`, 'cyan');
+    log(`  扫描本地文件: ${formatDuration(stepTimings.scanLocal - stepTimings.mkdir)}`, 'cyan');
+    log(`  扫描远程文件: ${formatDuration(stepTimings.scanRemote - stepTimings.scanLocal)}`, 'cyan');
+    log(`  上传文件: ${formatDuration(stepTimings.upload - stepTimings.scanRemote)}`, 'cyan');
+    log(`  删除文件: ${formatDuration(stepTimings.delete - stepTimings.upload)}`, 'cyan');
+    log(`  ────────────────`, 'cyan');
+    log(`  总耗时: ${formatDuration(totalTime)}`, 'green');
 
   } catch (error) {
     log('\n========================================', 'red');
