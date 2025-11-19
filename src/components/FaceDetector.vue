@@ -990,47 +990,6 @@ function captureFrame(): string | null {
 }
 
 /**
- * 根据人脸区域裁切当前视频帧并转换为 JPEG 图片
- * @param {Array} faceBox - 人脸边界框 [x, y, width, height]
- * @returns {string} Base64 格式的 JPEG 图片数据（只包含人脸区域）
- */
-// function captureFaceFrame(faceBox: number[]): string | null {
-//   try {
-//     if (!faceBox || !videoRef.value) {
-//       console.warn('[FaceDetector] Invalid faceBox, using full frame')
-//       return captureFrame()
-//     }
-
-//     const [x, y, width, height] = faceBox
-    
-//     // 如果缓存的 canvas 尺寸不匹配，重新创建
-//     if (!captureCanvas || captureCanvas.width !== width || captureCanvas.height !== height) {
-//       captureCanvas = document.createElement('canvas')
-//       captureCanvas.width = width
-//       captureCanvas.height = height
-//       captureCtx = captureCanvas.getContext('2d')
-//     }
-    
-//     if (!captureCtx) return null
-    
-//     // 从视频中裁切人脸区域
-//     captureCtx.drawImage(
-//       videoRef.value,
-//       x, y, width, height,      // 源区域（视频中的人脸位置）
-//       0, 0, width, height        // 目标区域（canvas）
-//     )
-    
-//     const croppedImageData = captureCanvas.toDataURL('image/jpeg', 0.9)
-//     console.log('[FaceDetector] Face frame captured and cropped, size:', croppedImageData.length, 'box:', faceBox)
-//     return croppedImageData
-//   } catch (e) {
-//     console.error('[FaceDetector] Failed to capture face frame:', e)
-//     // 降级：返回完整帧
-//     return captureFrame()
-//   }
-// }
-
-/**
  * 进行静默活体检测（自动检测采集的图片是否为真实人脸）
  * 使用 Human.js 的 liveness 检测能力
  */

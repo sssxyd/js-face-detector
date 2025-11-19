@@ -96,6 +96,9 @@ export interface FaceDetectedData {
     frontal: number
 }
 
+/**
+ * 静默活体检测数据
+ */
 export interface LivenessDetectedData {
     real: number  // 反欺骗（anti-spoofing）得分 (0-1)
     live: number  // 活体检测得分 (0-1)
@@ -109,7 +112,7 @@ export interface FaceCollectedData {
 }
 
 /**
- * 活体检测完成数据
+ * 动作/静默活体检测完成数据
  */
 export interface LivenessCompletedData {
     imageData: string | null
@@ -117,7 +120,7 @@ export interface LivenessCompletedData {
 }
 
 /**
- * 活体检测动作数据
+ * 动作活体检测动作数据
  */
 export interface LivenessActionData {
     action: LivenessAction
@@ -125,6 +128,9 @@ export interface LivenessActionData {
     status: LivenessActionStatus
 }
 
+/**
+ * 活体动作状态枚举
+ */
 export enum LivenessActionStatus {
   STARTED = 'started',
   COMPLETED = 'completed',
