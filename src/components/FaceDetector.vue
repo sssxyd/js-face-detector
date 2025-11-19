@@ -65,8 +65,6 @@ const resultImageRef: Ref<HTMLImageElement | null> = ref(null)
 const resultImageSrc: Ref<string> = ref('')
 // 是否为移动设备
 const isMobileDevice: Ref<boolean> = ref(false)
-// 是否为竖屏方向
-const isPortrait: Ref<boolean> = ref(true)
 // 是否正在进行检测
 const isDetecting: Ref<boolean> = ref(false)
 
@@ -94,7 +92,6 @@ let actionTimeoutId: ReturnType<typeof setTimeout> | null = null
 
 // ===== 检测超时相关变量 =====
 let detectionStartTime: number = 0
-let noFaceFrameCount: number = 0
 
 // ===== 活体检测相关类型定义 =====
 interface DetectionState {
@@ -174,6 +171,9 @@ const videoBorderColor: Ref<string> = ref(BORDER_COLOR_STATES.IDLE)
 // 是否正在初始化检测库
 const isInitializing: Ref<boolean> = ref(false)
 
+// ===== 事件监听器引用 =====
+let handleVisibilityChange: (() => void) | null = null
+
 // ===== 生命周期钩子 =====
 // 组件挂载时初始化
 onMounted(async () => {
@@ -182,7 +182,7 @@ onMounted(async () => {
   window.addEventListener('orientationchange', handleOrientationChange)
   
   // Safari 兼容性：监听可见性变化，确保后台不被限流
-  const handleVisibilityChange = () => {
+  handleVisibilityChange = () => {
     if (document.hidden) {
       console.log('[FaceDetector] Page hidden, pausing detection')
       if (isDetecting.value) {
@@ -200,7 +200,49 @@ onMounted(async () => {
   // 配置 Human 检测库
   isInitializing.value = true
   
-  // 默认配置
+  // 合并并应用 Human 配置
+  const mergedConfig = mergeHumanConfig()
+  human = new Human(mergedConfig as any)
+  try {
+    console.log('[FaceDetector] Loading Human.js library...')
+    const userAgent = navigator.userAgent
+    const isSafari = /Safari/.test(userAgent) && !/Chrome/.test(userAgent)
+    console.log('[FaceDetector] Browser: Safari=' + isSafari + ', UserAgent=' + userAgent)
+    
+    await human.load()
+    console.log('[FaceDetector] Human.js library loaded successfully')
+    console.log('[FaceDetector] Available models:', human.models)
+  } catch (e) {
+    console.error('[FaceDetector] Failed to load Human library:', e)
+    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.ENGINE_NOT_INITIALIZED, message: '检测库加载失败: ' + (e instanceof Error ? e.message : '未知错误') })
+  }
+  isInitializing.value = false
+})
+
+// 组件卸载时清理资源
+onUnmounted(() => {
+  stopDetection()
+  window.removeEventListener('orientationchange', handleOrientationChange)
+  // 移除可见性监听
+  if (handleVisibilityChange) {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    handleVisibilityChange = null
+  }
+  // 清理缓存的临时 canvas
+  captureCanvas = null
+  captureCtx = null
+  // 清理待处理的检测帧
+  cancelPendingDetection()
+})
+
+// ===== 常量定义 =====
+// 使用 CONFIG 替代本地常量定义（已从 face-detector.ts 导入）
+
+// ===== 配置合并辅助函数 =====
+/**
+ * 合并 Human.js 配置，用户配置优先级更高
+ */
+function mergeHumanConfig(): Record<string, any> {
   const defaultConfig = {
     // 模型文件本地路径
     modelBasePath: '/models',
@@ -219,8 +261,13 @@ onMounted(async () => {
     gesture: { enabled: true }     // 启用手势检测(包含眨眼)
   }
   
+  // 如果用户没有提供自定义配置，直接返回默认配置
+  if (Object.keys(props.humanConfig).length === 0) {
+    return defaultConfig
+  }
+  
   // 深度合并用户配置和默认配置
-  const mergedConfig = {
+  return {
     ...defaultConfig,
     ...props.humanConfig,
     face: {
@@ -228,43 +275,7 @@ onMounted(async () => {
       ...(props.humanConfig?.face || {})
     }
   }
-  
-  human = new Human(mergedConfig as any)
-  try {
-    console.log('[FaceDetector] Loading Human.js library...')
-    const userAgent = navigator.userAgent
-    const isSafari = /Safari/.test(userAgent) && !/Chrome/.test(userAgent)
-    console.log('[FaceDetector] Browser: Safari=' + isSafari + ', UserAgent=' + userAgent)
-    
-    await human.load()
-    console.log('[FaceDetector] Human.js library loaded successfully')
-    console.log('[FaceDetector] Available models:', human.models)
-  } catch (e) {
-    console.error('[FaceDetector] Failed to load Human library:', e)
-    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.ENGINE_NOT_INITIALIZED, message: '检测库加载失败: ' + (e instanceof Error ? e.message : '未知错误') })
-  }
-  isInitializing.value = false
-  
-  // 返回清理函数
-  return () => {
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }
-})
-
-// 组件卸载时清理资源
-onUnmounted(() => {
-  stopDetection()
-  window.removeEventListener('orientationchange', handleOrientationChange)
-  document.removeEventListener('visibilitychange', () => {}) // 移除可见性监听
-  // 清理缓存的临时 canvas
-  captureCanvas = null
-  captureCtx = null
-  // 清理待处理的检测帧
-  cancelPendingDetection()
-})
-
-// ===== 常量定义 =====
-// 使用 CONFIG 替代本地常量定义（已从 face-detector.ts 导入）
+}
 
 // ===== 设备检测与方向处理 =====
 /**
@@ -273,8 +284,6 @@ onUnmounted(() => {
 function detectDevice(): void {
   // 判断是否为移动设备
   isMobileDevice.value = navigator.userAgent.toLowerCase().match(/android|iphone/) !== null || window.innerWidth < CONFIG.MOBILE.WIDTH_THRESHOLD
-  // 判断是否为竖屏
-  isPortrait.value = window.innerHeight >= window.innerWidth
   
   if (isMobileDevice.value) {
     // 移动设备：根据屏幕方向调整，但保持 1:1 比例
@@ -294,8 +303,6 @@ function detectDevice(): void {
  * 处理设备方向改变事件
  */
 function handleOrientationChange(): void {
-  isPortrait.value = window.innerHeight >= window.innerWidth
-  
   // 如果正在检测，则重启检测以适配新的方向
   if (isDetecting.value) {
     cancelPendingDetection()
@@ -333,7 +340,6 @@ function resetDetectionState(): void {
   
   // 重置检测超时计数器
   detectionStartTime = performance.now()
-  noFaceFrameCount = 0
 }
 
 /**
@@ -524,6 +530,27 @@ function handleSingleFace(faceRatio: number, frontal: number, gestures: any): vo
 }
 
 /**
+ * 验证活体检测是否应该中止 - 检查人脸数量变化
+ * @param {number} faceCount - 人脸数量
+ * @returns {boolean} 如果应该中止检测则返回 true
+ */
+function shouldStopLivenessOnFaceCountChange(faceCount: number): boolean {
+  // 在 LIVENESS 模式下，已开始检测但人脸数量不为 1 时应中止
+  if (props.mode === DetectionMode.LIVENESS && detectionState.isLivenessStarted && faceCount !== 1) {
+    console.error('[FaceDetector] Face count changed during liveness detection, expected 1 but got', faceCount)
+    return true
+  }
+  
+  // 在 SILENT_LIVENESS 模式下，已开始检测但人脸数量不为 1 时应中止
+  if (props.mode === DetectionMode.SILENT_LIVENESS && detectionState.isSilentLivenessStarted && faceCount !== 1) {
+    console.error('[FaceDetector] Face count changed during silent liveness detection, expected 1 but got', faceCount)
+    return true
+  }
+  
+  return false
+}
+
+/**
  * 处理检测到多个或零个人脸的情况
  * @param {number} faceCount - 人脸数量
  */
@@ -537,17 +564,8 @@ function handleMultipleFaces(faceCount: number): void {
   // 更新边框颜色
   updateBorderColor(faceInfo)
   
-  // 在 LIVENESS 或 SILENT_LIVENESS 模式下，如果已开始活体检测，不能检测不到人脸或多个人脸
-  if (props.mode === DetectionMode.LIVENESS && detectionState.isLivenessStarted && faceCount !== 1) {
-    console.error('[FaceDetector] Face count changed during liveness detection, expected 1 but got', faceCount)
-    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.FACE_COUNT_CHANGED, message: `检测到人脸数量变化，期望1张，实际${faceCount}张。请保持正脸对着摄像头，重新开始检测。` })
-    stopDetection()
-    return
-  }
-  
-  if (props.mode === DetectionMode.SILENT_LIVENESS && detectionState.isSilentLivenessStarted && faceCount !== 1) {
-    console.error('[FaceDetector] Face count changed during silent liveness detection, expected 1 but got', faceCount)
+  // 检查活体检测期间是否发生人脸数量变化
+  if (shouldStopLivenessOnFaceCountChange(faceCount)) {
     videoBorderColor.value = BORDER_COLOR_STATES.ERROR
     emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.FACE_COUNT_CHANGED, message: `检测到人脸数量变化，期望1张，实际${faceCount}张。请保持正脸对着摄像头，重新开始检测。` })
     stopDetection()
@@ -641,9 +659,6 @@ async function detect(): Promise<void> {
     const faces = result.face || []
     
     if (faces.length === 1) {
-      // 重置无人脸计数器
-      noFaceFrameCount = 0
-      
       // 处理单人脸的情况
       const face = faces[0] as any
       const faceBox = face.box || face.boxRaw
@@ -661,9 +676,6 @@ async function detect(): Promise<void> {
       
       handleSingleFace(faceRatio, frontal, result.gesture)
     } else {
-      // 累计无人脸帧数，用于超时检测
-      noFaceFrameCount++
-      
       // 处理多人脸或无人脸的情况
       handleMultipleFaces(faces.length)
     }
@@ -882,46 +894,63 @@ function updateActionPrompt(action: LivenessAction): void {
 }
 
 /**
+ * 检测眨眼动作
+ */
+function isBlinkDetected(gestures: any): boolean {
+  return gestures?.some((g: any) => g.gesture?.includes('blink')) ?? false
+}
+
+/**
+ * 检测张嘴动作
+ */
+function isMouthOpenDetected(gestures: any): boolean {
+  if (!gestures) return false
+  
+  return gestures.some((g: any) => {
+    const mouthGesture = g.gesture
+    if (!mouthGesture?.includes('mouth')) return false
+    
+    // 提取嘴巴打开的百分比
+    const percentMatch = mouthGesture.match(/mouth (\d+)% open/)?.[1]
+    const percent = percentMatch ? parseInt(percentMatch) : 0
+    
+    // 判断嘴巴打开（> 20% 认为是打开状态）
+    return percent > CONFIG.LIVENESS.MIN_MOUTH_OPEN_PERCENT
+  })
+}
+
+/**
+ * 检测点头动作
+ */
+function isNodDetected(gestures: any): boolean {
+  if (!gestures) return false
+  
+  // 获取当前帧的 head 动作
+  const currentHead = gestures.find((g: any) => g.gesture?.includes('head'))?.gesture
+  
+  if (!currentHead) return false
+  
+  // 提取 head 方向（up/down）
+  const headDirection = currentHead.match(/(up|down)/)?.[0]
+  
+  // 只要检测到抬头(up)或低头(down)就通过
+  return !!headDirection
+}
+
+/**
  * 检测指定的动作是否被执行
  */
 function detectAction(action: string, gestures: any): boolean {
-  if (action === LivenessAction.BLINK && gestures) {
-    // 眨眼检测：检查 gesture 中是否包含 'blink'
-    return gestures.some((g: any) => g.gesture?.includes('blink'))
-    
-  } else if (action === LivenessAction.MOUTH_OPEN && gestures) {
-    // 张嘴检测：检查嘴巴是否打开（任何打开百分比 > 0%）
-    return gestures.some((g: any) => {
-      const mouthGesture = g.gesture
-      if (!mouthGesture?.includes('mouth')) return false
-      
-      // 提取嘴巴打开的百分比
-      const percentMatch = mouthGesture.match(/mouth (\d+)% open/)?.[1]
-      const percent = percentMatch ? parseInt(percentMatch) : 0
-      
-      // 判断嘴巴打开（> 20% 认为是打开状态）
-      return percent > CONFIG.LIVENESS.MIN_MOUTH_OPEN_PERCENT
-    })
-    
-  } else if (action === LivenessAction.NOD && gestures) {
-    // 点头检测优化：只要检测到抬头或者低头，就算通过
-    // 简化规则：只需检测到 "head up" 或 "head down"
-    
-    // 获取当前帧的 head 动作
-    const currentHead = gestures.find((g: any) => g.gesture?.includes('head'))?.gesture
-    
-    if (currentHead) {
-      // 提取 head 方向（up/down）
-      const headDirection = currentHead.match(/(up|down)/)?.[0]
-      
-      // 只要检测到抬头(up)或低头(down)就通过
-      if (headDirection) {
-        return true
-      }
-    }
+  switch (action) {
+    case LivenessAction.BLINK:
+      return isBlinkDetected(gestures)
+    case LivenessAction.MOUTH_OPEN:
+      return isMouthOpenDetected(gestures)
+    case LivenessAction.NOD:
+      return isNodDetected(gestures)
+    default:
+      return false
   }
-  
-  return false
 }
 
 // ===== 工具方法 =====
@@ -1063,7 +1092,7 @@ async function performSilentLivenessDetection(): Promise<void> {
 
         const info: LivenessDetectedData = {
           real: faceData.real || -1,
-          live: faceData.liveness || -1
+          live: faceData.live || -1
         }
         emit(FACE_DETECTOR_EVENTS.LIVENESS_DETECTED, info)
         
@@ -1197,13 +1226,6 @@ defineExpose({ startDetection, stopDetection })
   padding: 15px;
 }
 
-/* 设备信息展示样式 */
-.device-info {
-  font-size: 12px;
-  color: #999;
-  margin-bottom: 10px;
-}
-
 /* 视频容器样式 */
 .video-container {
   position: relative;
@@ -1247,32 +1269,23 @@ video {
   border-radius: 50%;  /* 圆形裁剪 */
 }
 
-/* 检测框画布样式（z-index最高，在所有元素上方） */
-.detection-canvas {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  aspect-ratio: 1;
-  background: transparent;
-  box-sizing: border-box;
-  border-radius: 50%;  /* 圆形 */
-}
-
 /* 活体检测提示文本样式 */
 .action-prompt {
   position: absolute;
-  top: 20px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   background-color: rgba(0, 0, 0, 0.7);
   color: #fff;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 600;
+  padding: 20px 40px;
+  border-radius: 12px;
+  font-size: 28px;
+  font-weight: 700;
   white-space: nowrap;
   z-index: 10;
   animation: fadeIn 0.3s ease-in;
+  text-align: center;
+  letter-spacing: 1px;
 }
 
 @keyframes fadeIn {

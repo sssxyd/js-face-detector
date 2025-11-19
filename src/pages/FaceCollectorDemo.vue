@@ -44,7 +44,7 @@
         </div>
         <div class="info-row">
           <span class="label">人脸画面占比:</span>
-          <span class="value">{{ faceInfo.size }}%</span>
+          <span class="value">{{ faceInfo.size.toFixed(2) }}</span>
           <span class="progress-bar">
             <span class="progress-fill" :style="{ width: Math.min(faceInfo.size, 100) + '%' }"></span>
           </span>
@@ -52,7 +52,7 @@
         <div class="info-row">
           <span class="label">正脸置信度:</span>
           <span class="value" :class="faceInfo.frontal >= minFrontal ? 'success' : 'warning'">
-            {{ (faceInfo.frontal * 100).toFixed(0) }}%
+            {{ faceInfo.frontal.toFixed(2) }}
           </span>
           <span class="progress-bar">
             <span class="progress-fill" :style="{ width: (faceInfo.frontal * 100) + '%' }"></span>
