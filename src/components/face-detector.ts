@@ -328,11 +328,11 @@ export const CONFIG = Object.freeze({
   // 图像质量相关配置
   IMAGE_QUALITY: {
     // 最小人脸检测框分数（0-1）- 检测框置信度低于此值表示检测不清晰
-    MIN_BOX_SCORE: 0.9,
+    MIN_BOX_SCORE: 0.8,
     // 最小人脸网格分数（0-1）- 网格置信度低于此值表示图像模糊或质量差
-    MIN_FACE_SCORE: 0.9,
+    MIN_FACE_SCORE: 0.8,
     // 最小综合分数（0-1）- 综合评分低于此值表示图像质量不足
-    MIN_OVERALL_SCORE: 0.85,
+    MIN_OVERALL_SCORE: 0.8,
     // 人脸完整性检测相关配置
     FACE_COMPLETENESS: {
       // 检测的关键部位是否存在
