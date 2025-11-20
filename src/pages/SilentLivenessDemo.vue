@@ -31,7 +31,7 @@
       :min-frontal="minFrontal"
       :silent-liveness-threshold="0.85"
       @ready="handleComponentReady"
-      @face-detected="handleFaceDetected"
+      @status-prompt="handleStatusPrompt"
       @liveness-completed="handleLivenessCompleted"
       @liveness-detected="handleLivenessDetected"
       @error="handleError"
@@ -39,53 +39,7 @@
 
     <div class="info-panel">
       <h3>检测信息</h3>
-      <div v-if="faceInfo" class="face-info-detail">
-        <div v-if="livenessInfo" class="info-row">
-          <span class="label">反欺诈得分:</span>
-          <span class="value" :class="livenessInfo.real >= 0.5 ? 'success' : 'warning'">
-            {{ (livenessInfo.real * 100).toFixed(1) }}%
-          </span>
-          <span class="label">活体得分:</span>
-          <span class="value" :class="livenessInfo.live >= 0.5 ? 'success' : 'warning'">
-            {{ (livenessInfo.live * 100).toFixed(1) }}%
-          </span>
-        </div>
-        <div class="info-row">
-          <span class="label">人脸数量:</span>
-          <span class="value" :class="faceInfo.count === 1 ? 'success' : 'warning'">
-            {{ faceInfo.count }}
-          </span>
-        </div>
-        <div class="info-row">
-          <span class="label">人脸画面占比:</span>
-          <span class="value">{{ faceInfo.size.toFixed(2) }}</span>
-          <span class="progress-bar">
-            <span class="progress-fill" :style="{ width: Math.min(faceInfo.size, 100) + '%' }"></span>
-          </span>
-        </div>
-        <div class="info-row">
-          <span class="label">正脸置信度:</span>
-          <span class="value" :class="faceInfo.frontal >= minFrontal ? 'success' : 'warning'">
-            {{ faceInfo.frontal.toFixed(2) }}
-          </span>
-          <span class="progress-bar">
-            <span class="progress-fill" :style="{ width: (faceInfo.frontal * 100) + '%' }"></span>
-          </span>
-        </div>  
-        <div v-if="isDetecting && faceInfo.frontal < minFrontal" class="hint-text">
-          💡 请将脸正对摄像头
-        </div>
-        <div v-if="isDetecting && faceInfo.size < minFaceRatio" class="hint-text">
-          💡 请靠近摄像头（目标：{{ (minFaceRatio * 100).toFixed(0) }}%-{{ (maxFaceRatio * 100).toFixed(0) }}%）
-        </div>
-        <div v-if="isDetecting && faceInfo.size > maxFaceRatio" class="hint-text">
-          💡 请远离摄像头（目标：{{ (minFaceRatio * 100).toFixed(0) }}%-{{ (maxFaceRatio * 100).toFixed(0) }}%）
-        </div>
-        <div v-if="isDetecting && faceInfo.size >= minFaceRatio && faceInfo.size <= maxFaceRatio && faceInfo.frontal >= minFrontal" class="hint-text success-hint">
-          ✓ 完美！检测中...
-        </div>
-      </div>
-      <p v-else>等待开始检测...</p>
+      <p>检测进行中...</p>
     </div>
 
     <div v-if="errorMessage" class="error-panel">
@@ -114,7 +68,7 @@
 <script setup lang="ts">
 import { ref, Ref } from 'vue'
 import FaceDetector from '../components/FaceDetector.vue'
-import { ErrorCode, FaceDetectedData, LivenessCompletedData, LivenessDetectedData } from '../components/face-detector'
+import { ErrorCode, LivenessCompletedData, LivenessDetectedData } from '../components/face-detector'
 
 // 人脸检测参数
 const minFaceRatio: Ref<number> = ref(0.5)  // 最小人脸占比(0-1)
@@ -122,7 +76,6 @@ const maxFaceRatio: Ref<number> = ref(0.8)  // 最大人脸占比(0-1)
 const minFrontal: Ref<number> = ref(0.9)    // 最小正对度(0-1)
 
 const faceDetectorRef: Ref<any> = ref(null)
-const faceInfo: Ref<FaceDetectedData | null> = ref(null)
 const livenessInfo: Ref<LivenessDetectedData | null> = ref(null)
 const verifiedImage: Ref<string | null> = ref(null)
 const errorCode: Ref<ErrorCode | null> = ref(null)
@@ -136,8 +89,8 @@ function handleComponentReady(): void {
   console.log('FaceDetector 组件已就绪')
 }
 
-function handleFaceDetected(data: FaceDetectedData): void {
-  faceInfo.value = data
+function handleStatusPrompt(): void {
+  // message will be handled by the UI
 }
 
 function handleLivenessDetected(data: LivenessDetectedData): void {
@@ -183,7 +136,6 @@ function stopDetection(): void {
 
 function resetDetection(): void {
   verifiedImage.value = null
-  faceInfo.value = null
   errorMessage.value = null
   livenessScore.value = null
   isDetecting.value = false
@@ -270,87 +222,6 @@ function handleImageError(error: Event): void {
   margin: 0 0 15px 0;
   font-size: 16px;
   color: #333;
-}
-
-.face-info-detail {
-  text-align: left;
-}
-
-.info-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 10px;
-  background-color: #fff;
-  border-radius: 5px;
-  flex-wrap: wrap;
-}
-
-.info-row .label {
-  font-weight: 500;
-  color: #555;
-  min-width: 100px;
-}
-
-.info-row .value {
-  font-weight: 600;
-  color: #333;
-  min-width: 60px;
-  text-align: right;
-}
-
-.info-row .value.success {
-  color: #42b983;
-}
-
-.info-row .value.warning {
-  color: #f56c6c;
-}
-
-.progress-bar {
-  flex: 1;
-  min-width: 150px;
-  height: 8px;
-  background-color: #e0e0e0;
-  border-radius: 4px;
-  overflow: hidden;
-  margin-left: auto;
-}
-
-.progress-fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #42b983, #35a372);
-  transition: width 0.3s ease;
-  border-radius: 4px;
-}
-
-.hint-text {
-  margin-top: 12px;
-  padding: 10px;
-  background-color: #fff3cd;
-  color: #856404;
-  border-left: 4px solid #ffc107;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.hint-text.success-hint {
-  background-color: #d4edda;
-  color: #155724;
-  border-left-color: #28a745;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.8;
-  }
 }
 
 .info-panel p {

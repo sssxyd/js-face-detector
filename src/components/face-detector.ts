@@ -153,6 +153,7 @@ export enum LivenessActionStatus {
 }
 
 export enum PromptCode {
+  NORMAL_STATE = 'NORMAL_STATE',
   NO_FACE_DETECTED = 'NO_FACE_DETECTED',
   MULTIPLE_FACES_DETECTED = 'MULTIPLE_FACES_DETECTED',
   FACE_TOO_SMALL = 'FACE_TOO_SMALL',
@@ -163,12 +164,13 @@ export enum PromptCode {
 }
 
 export const PROMPT_CODE_DESCRIPTIONS: Record<PromptCode, string> = {
-  [PromptCode.NO_FACE_DETECTED]: '未检测到人脸，请将脸部置于框内',
-  [PromptCode.MULTIPLE_FACES_DETECTED]: '检测到多个人脸，请确保画面中只有一张人脸',
-  [PromptCode.FACE_TOO_SMALL]: '人脸过小，请靠近摄像头',
-  [PromptCode.FACE_TOO_LARGE]: '人脸过大，请远离摄像头',
-  [PromptCode.FACE_NOT_FRONTAL]: '请正对摄像头，保持头部平稳',
-  [PromptCode.POOR_IMAGE_QUALITY]: '图像质量较差，请调整光线或摄像头位置',
+  [PromptCode.NORMAL_STATE]: '检测正常',
+  [PromptCode.NO_FACE_DETECTED]: '未检测到人脸',
+  [PromptCode.MULTIPLE_FACES_DETECTED]: '检测到多人',
+  [PromptCode.FACE_TOO_SMALL]: '请靠近摄像头',
+  [PromptCode.FACE_TOO_LARGE]: '请远离摄像头',
+  [PromptCode.FACE_NOT_FRONTAL]: '请正对摄像头',
+  [PromptCode.POOR_IMAGE_QUALITY]: '图像模糊请调整',
   [PromptCode.PLEASE_PERFORM_ACTION]: '请完成指定动作',
 }
 
@@ -279,7 +281,9 @@ export const CONFIG = Object.freeze({
     // 默认视频宽度（像素）- 桌面设备使用的固定宽度 (1:1 比例)
     DEFAULT_VIDEO_WIDTH: 640,
     // 默认视频高度（像素）- 桌面设备使用的固定高度 (1:1 比例)
-    DEFAULT_VIDEO_HEIGHT: 640
+    DEFAULT_VIDEO_HEIGHT: 640,
+    // 提示文本显示时长（毫秒）- 状态提示文本自动清空的时间间隔
+    PROMPT_TEXT_DURATION: 3000
   },
   // 移动设备适配配置
   MOBILE: {

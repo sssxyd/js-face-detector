@@ -80,7 +80,7 @@
         :silent-liveness-threshold="0.85"
         :show-action-prompt="true"
         @ready="handleComponentReady"
-        @face-detected="handleFaceDetected"
+        @status-prompt="handleStatusPrompt"
         @face-collected="handleFaceCollected"
         @liveness-detected="handleLivenessDetected"
         @liveness-completed="handleLivenessCompleted"
@@ -204,10 +204,8 @@ const handleComponentReady = () => {
 }
 
 // 处理事件方法
-const handleFaceDetected = (data: any) => {
-  stats.faceCount = data.count
-  stats.faceSize = data.size
-  stats.frontal = data.frontal
+const handleStatusPrompt = () => {
+  // message will be handled by the UI
 }
 
 const handleFaceCollected = (data: any) => {

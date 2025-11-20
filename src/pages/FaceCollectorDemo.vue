@@ -30,48 +30,22 @@
       :max-face-ratio="maxFaceRatio"
       :min-frontal="minFrontal"
       @ready="handleComponentReady"
-      @face-detected="handleFaceDetected"
+      @status-prompt="handleStatusPrompt"
       @face-collected="handleFaceCollected"
       @error="handleError"
       @debug="handleDebug"
     />
 
     <div class="info-panel">
-      <h3>采集信息</h3>
-      <div v-if="faceInfo" class="face-info-detail">
-        <div class="info-row">
-          <span class="label">人脸数量:</span>
-          <span class="value" :class="faceInfo.count === 1 ? 'success' : 'warning'">
-            {{ faceInfo.count }}
-          </span>
+      <h3>提示信息</h3>
+      <div v-if="promptInfo" class="prompt-detail">
+        <div class="message-section">
+          <span class="label">状态提示:</span>
+          <span class="message-text">{{ promptInfo.message }}</span>
         </div>
-        <div class="info-row">
-          <span class="label">人脸画面占比:</span>
-          <span class="value">{{ faceInfo.size.toFixed(2) }}</span>
-          <span class="progress-bar">
-            <span class="progress-fill" :style="{ width: Math.min(faceInfo.size, 100) + '%' }"></span>
-          </span>
-        </div>
-        <div class="info-row">
-          <span class="label">正脸置信度:</span>
-          <span class="value" :class="faceInfo.frontal >= minFrontal ? 'success' : 'warning'">
-            {{ faceInfo.frontal.toFixed(2) }}
-          </span>
-          <span class="progress-bar">
-            <span class="progress-fill" :style="{ width: (faceInfo.frontal * 100) + '%' }"></span>
-          </span>
-        </div>
-        <div v-if="isDetecting && faceInfo.frontal < minFrontal" class="hint-text">
-          💡 请将脸正对摄像头
-        </div>
-        <div v-if="isDetecting && faceInfo.size < minFaceRatio" class="hint-text">
-          💡 请靠近摄像头（目标：{{ (minFaceRatio * 100).toFixed(0) }}%-{{ (maxFaceRatio * 100).toFixed(0) }}%）
-        </div>
-        <div v-if="isDetecting && faceInfo.size > maxFaceRatio" class="hint-text">
-          💡 请远离摄像头（目标：{{ (minFaceRatio * 100).toFixed(0) }}%-{{ (maxFaceRatio * 100).toFixed(0) }}%）
-        </div>
-        <div v-if="isDetecting && faceInfo.size >= minFaceRatio && faceInfo.size <= maxFaceRatio && faceInfo.frontal >= minFrontal" class="hint-text success-hint">
-          ✓ 完美！准备采集中...
+        <div class="data-section">
+          <span class="label">详细数据:</span>
+          <pre class="json-display">{{ JSON.stringify(promptInfo.data, null, 2) }}</pre>
         </div>
       </div>
       <p v-else>等待开始采集...</p>
@@ -135,7 +109,7 @@
 <script setup lang="ts">
 import { ref, Ref } from 'vue'
 import FaceDetector from '../components/FaceDetector.vue'
-import { FaceCollectedData, FaceDetectedData, DebugData} from '../components/face-detector'
+import { FaceCollectedData, PromptCode, DebugData, StatusPromptData } from '../components/face-detector'
 
 // 人脸检测参数
 const minFaceRatio: Ref<number> = ref(0.5)  // 最小人脸占比(0-1)
@@ -143,7 +117,7 @@ const maxFaceRatio: Ref<number> = ref(0.8)  // 最大人脸占比(0-1)
 const minFrontal: Ref<number> = ref(0.9)    // 最小正对度(0-1)
 
 const faceDetectorRef: Ref<any> = ref(null)
-const faceInfo: Ref<FaceDetectedData | null> = ref(null)
+const promptInfo: Ref<{ code: PromptCode, message: string, data: Record<string, any> } | null> = ref(null)
 const collectedImage: Ref<string | null> = ref(null)
 const errorMessage: Ref<string | null> = ref(null)
 const isDetecting: Ref<boolean> = ref(false)
@@ -154,8 +128,10 @@ const debugLogs: Ref<DebugData[]> = ref([])
 const showDebugPanel: Ref<boolean> = ref(false)
 const maxDebugLogs: number = 50  // 最多保存 50 条日志
 
-function handleFaceDetected(data: FaceDetectedData): void {
-  faceInfo.value = data
+function handleStatusPrompt(data: StatusPromptData): void {
+  // 根据状态码更新面部信息，排除 code 和 message 字段
+  const { code, message, ...restData } = data
+  promptInfo.value = { code, message, data: restData }
 }
 
 function handleComponentReady(): void {
@@ -205,7 +181,7 @@ function stopDetection(): void {
 
 function resetCollection(): void {
   collectedImage.value = null
-  faceInfo.value = null
+  promptInfo.value = null
   errorMessage.value = null
   isDetecting.value = false
 }
@@ -293,6 +269,64 @@ function handleImageError(): void {
 
 .face-info-detail {
   text-align: left;
+}
+
+.prompt-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.message-section {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background-color: #fff;
+  border-left: 4px solid #42b983;
+  border-radius: 4px;
+}
+
+.message-section .label {
+  font-weight: 600;
+  color: #333;
+  min-width: 80px;
+  margin-right: 15px;
+}
+
+.message-text {
+  color: #42b983;
+  font-weight: 500;
+  font-size: 15px;
+  flex: 1;
+}
+
+.data-section {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+}
+
+.data-section .label {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.json-display {
+  margin: 0;
+  padding: 12px;
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #333;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .info-row {
