@@ -751,12 +751,20 @@ function handleCollectionMode(): void {
       return
     }
   } else {
-    emitDebug('quality', '无法获取人脸检测结果用于质量评估', {}, 'warn')
-    emit(FACE_DETECTOR_EVENTS.FACE_COLLECTED, { 
-      imageData: detectionState.baselineImage 
+    // 无法获取人脸检测结果 - 这是一个错误条件，不应该直接通过
+    // 可能原因：Human.js 检测结果不完整或格式异常
+    emitDebug('quality', '无法获取人脸检测结果用于质量评估', { 
+      hasHuman: !!human, 
+      hasResult: !!human?.result, 
+      hasFaces: !!human?.result?.face,
+      faceCount: human?.result?.face?.length || 0
+    }, 'error')
+    emit(FACE_DETECTOR_EVENTS.ERROR, { 
+      code: ErrorCode.DETECTION_ERROR, 
+      message: '检测结果格式异常，无法评估图像质量。请重新尝试。' 
     })
-    videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
-    stopDetection(true)
+    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
+    stopDetection()
   }
 }
 
@@ -921,36 +929,45 @@ async function detect(): Promise<void> {
 function checkImageQuality(face: any): { passed: boolean, score: number, reasons: string[] } {
   const reasons: string[] = []
   
-  // 获取各个质量指标
-  const boxScore = face.boxScore || 0
-  const faceScore = face.faceScore || 0
-  const overallScore = face.score || 0
+  // 获取各个质量指标 - 区分 undefined 和 0
+  // 如果属性完全不存在，认为无法评估，视为失败
+  const boxScore = face.boxScore !== undefined ? face.boxScore : null
+  const faceScore = face.faceScore !== undefined ? face.faceScore : null
+  const overallScore = face.score !== undefined ? face.score : null
   
-  // 检查人脸检测框置信度
-  if (boxScore < CONFIG.IMAGE_QUALITY.MIN_BOX_SCORE) {
+  // 检查必要属性是否存在
+  if (boxScore === null) {
+    reasons.push(`人脸检测框得分缺失 (boxScore 属性不存在)`)
+  } else if (boxScore < CONFIG.IMAGE_QUALITY.MIN_BOX_SCORE) {
     reasons.push(`人脸检测不清晰 (boxScore: ${boxScore.toFixed(2)} < ${CONFIG.IMAGE_QUALITY.MIN_BOX_SCORE})`)
   }
   
-  // 检查人脸网格置信度（最能反映图像模糊情况）
-  if (faceScore < CONFIG.IMAGE_QUALITY.MIN_FACE_SCORE) {
+  if (faceScore === null) {
+    reasons.push(`人脸网格得分缺失 (faceScore 属性不存在) - 可能是 Human.js 版本不支持或检测失败`)
+  } else if (faceScore < CONFIG.IMAGE_QUALITY.MIN_FACE_SCORE) {
     reasons.push(`图像模糊或质量差 (faceScore: ${faceScore.toFixed(2)} < ${CONFIG.IMAGE_QUALITY.MIN_FACE_SCORE})`)
   }
   
-  // 检查综合分数
-  if (overallScore < CONFIG.IMAGE_QUALITY.MIN_OVERALL_SCORE) {
+  if (overallScore === null) {
+    reasons.push(`综合得分缺失 (score 属性不存在)`)
+  } else if (overallScore < CONFIG.IMAGE_QUALITY.MIN_OVERALL_SCORE) {
     reasons.push(`整体图像质量不足 (score: ${overallScore.toFixed(2)} < ${CONFIG.IMAGE_QUALITY.MIN_OVERALL_SCORE})`)
   }
   
   const passed = reasons.length === 0
-  const score = Math.max(boxScore, faceScore, overallScore)
+  const score = Math.max(
+    boxScore !== null ? boxScore : 0,
+    faceScore !== null ? faceScore : 0,
+    overallScore !== null ? overallScore : 0
+  )
   
   if (!passed) {
     emitDebug('quality-check', '图像质量检测未通过', { 
       passed, 
       score: score.toFixed(2),
-      boxScore: boxScore.toFixed(2), 
-      faceScore: faceScore.toFixed(2), 
-      overallScore: overallScore.toFixed(2),
+      boxScore: boxScore !== null ? boxScore.toFixed(2) : 'N/A', 
+      faceScore: faceScore !== null ? faceScore.toFixed(2) : 'N/A', 
+      overallScore: overallScore !== null ? overallScore.toFixed(2) : 'N/A',
       reasons
     }, 'warn')
   }
