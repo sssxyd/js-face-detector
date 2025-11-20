@@ -1077,6 +1077,7 @@ function getKeypointConfidence(lm: any): number {
  */
 function checkFaceCompleteness(face: any, imageWidth: number, imageHeight: number): { passed: boolean, score: number, reasons: string[] } {
   const reasons: string[] = []
+  const config = CONFIG.IMAGE_QUALITY.FACE_COMPLETENESS
   let score = 1.0
   
   emitDebug('completeness-check', '开始人脸完整性检测', {
@@ -1092,7 +1093,7 @@ function checkFaceCompleteness(face: any, imageWidth: number, imageHeight: numbe
     // 检查人脸框是否完全在图片范围内
     if (x < 0 || y < 0 || (x + width) > imageWidth || (y + height) > imageHeight) {
       reasons.push('人脸超出图片边界，请调整位置')
-      score -= 0.3
+      score -= config.PENALTY_OUT_OF_BOUNDARY
       emitDebug('completeness-check', '人脸超出边界', { x, y, width, height, imageWidth, imageHeight })
     }
   } else {
@@ -1106,48 +1107,67 @@ function checkFaceCompleteness(face: any, imageWidth: number, imageHeight: numbe
   if (landmarks && landmarks.length > 0) {
     emitDebug('completeness-check', '关键点信息', { totalLandmarks: landmarks.length })
     
-    // MediaPipe FaceMesh 468 个点的分布：
-    // 眼睛：0-20 (约21个点)
-    // 嘴巴：61-95 (约35个点)
-    // 耳朵：109-122, 338-351 (约28个点)
-    
-    const eyeLandmarks = landmarks.filter((lm: any, idx: number) => 
-      idx < 21 && getKeypointConfidence(lm) > 0
+    // 使用配置中的索引范围检测各部位
+    // 眼睛：检测左右两只眼睛
+    const leftEyeLandmarks = landmarks.filter((lm: any, idx: number) => 
+      idx >= config.EYES.START && idx < Math.floor((config.EYES.START + config.EYES.END) / 2) && 
+      getKeypointConfidence(lm) > 0
     )
     
+    const rightEyeLandmarks = landmarks.filter((lm: any, idx: number) => 
+      idx >= Math.floor((config.EYES.START + config.EYES.END) / 2) && idx < config.EYES.END && 
+      getKeypointConfidence(lm) > 0
+    )
+    
+    // 嘴巴：直接检测
     const mouthLandmarks = landmarks.filter((lm: any, idx: number) => 
-      idx >= 61 && idx < 96 && getKeypointConfidence(lm) > 0
+      idx >= config.MOUTH.START && idx < config.MOUTH.END && getKeypointConfidence(lm) > 0
     )
     
-    const earLandmarks = landmarks.filter((lm: any, idx: number) => 
-      (idx >= 109 && idx <= 122) || (idx >= 338 && idx <= 351) && getKeypointConfidence(lm) > 0
+    // 耳朵：检测左右两只耳朵
+    const leftEarLandmarks = landmarks.filter((lm: any, idx: number) => 
+      idx >= config.EARS.LEFT_START && idx <= config.EARS.LEFT_END && 
+      getKeypointConfidence(lm) > 0
     )
     
-    // 检查三个关键部位是否都存在至少 1 个点
-    if (eyeLandmarks.length === 0) {
+    const rightEarLandmarks = landmarks.filter((lm: any, idx: number) => 
+      idx >= config.EARS.RIGHT_START && idx <= config.EARS.RIGHT_END && 
+      getKeypointConfidence(lm) > 0
+    )
+    
+    // 检查眼睛：只需检测到一只眼睛就通过
+    const hasEyes = leftEyeLandmarks.length > 0 || rightEyeLandmarks.length > 0
+    if (!hasEyes) {
       reasons.push('未检测到眼睛')
-      score -= 0.2
+      score -= config.PENALTY_MISSING_EYES
     }
     
+    // 检查嘴巴：必须检测到
     if (mouthLandmarks.length === 0) {
       reasons.push('未检测到嘴巴')
-      score -= 0.2
+      score -= config.PENALTY_MISSING_MOUTH
     }
     
-    if (earLandmarks.length === 0) {
+    // 检查耳朵：只需检测到一只耳朵就通过
+    const hasEars = leftEarLandmarks.length > 0 || rightEarLandmarks.length > 0
+    if (!hasEars) {
       reasons.push('未检测到耳朵')
-      score -= 0.2
+      score -= config.PENALTY_MISSING_EARS
     }
     
     emitDebug('completeness-check', '五官检测结果', {
-      eyes: eyeLandmarks.length,
+      leftEyes: leftEyeLandmarks.length,
+      rightEyes: rightEyeLandmarks.length,
       mouth: mouthLandmarks.length,
-      ears: earLandmarks.length
+      leftEars: leftEarLandmarks.length,
+      rightEars: rightEarLandmarks.length,
+      hasEyes,
+      hasEars
     })
   } else {
     // 无关键点数据
     reasons.push('未检测到人脸关键点')
-    score -= 0.3
+    score -= config.PENALTY_NO_LANDMARKS
   }
   
   // 确保分数在 0-1 之间

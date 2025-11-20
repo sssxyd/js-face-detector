@@ -354,7 +354,19 @@ export const CONFIG = Object.freeze({
         RIGHT_END: 351
       },
       // 关键点置信度阈值 (0-1) - 低于此值的关键点不算有效
-      KEYPOINT_CONFIDENCE_THRESHOLD: 0.3
+      KEYPOINT_CONFIDENCE_THRESHOLD: 0.3,
+      // 各部位检测失败的扣分值（0-1，值越小越宽松）
+      PENALTY_MISSING_EYES: 0.05,
+      PENALTY_MISSING_MOUTH: 0.05,
+      PENALTY_MISSING_EARS: 0.05,
+      // 人脸超出边界的扣分值
+      PENALTY_OUT_OF_BOUNDARY: 0.05,
+      // 无关键点数据的扣分值
+      PENALTY_NO_LANDMARKS: 0.1,
+      // 眼睛检测要求：0 表示至少检测一只眼睛，1 表示两只都要检测（仅用于旁注）
+      EYES_DETECTION_TYPE: 'any',  // 'any' = 一只眼睛, 'both' = 两只眼睛
+      // 耳朵检测要求：0 表示至少检测一只耳朵，1 表示两只都要检测
+      EARS_DETECTION_TYPE: 'any'   // 'any' = 一只耳朵, 'both' = 两只耳朵
     }
   },
   // 检测超时相关配置
