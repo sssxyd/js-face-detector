@@ -1069,130 +1069,85 @@ function getKeypointConfidence(lm: any): number {
 }
 
 /**
- * 检查人脸的完整性（五官齐全、未被裁剪）
+ * 检查人脸的完整性（只需确保耳朵、嘴巴、眼睛存在，且人脸在图片中）
  * @param {Object} face - 人脸检测结果
- * @param {number} imageWidth - 图片宽度（用于边界检测）
- * @param {number} imageHeight - 图片高度（用于边界检测）
+ * @param {number} imageWidth - 图片宽度
+ * @param {number} imageHeight - 图片高度
  * @returns {Object} { passed: boolean, score: number, reasons: string[] }
  */
 function checkFaceCompleteness(face: any, imageWidth: number, imageHeight: number): { passed: boolean, score: number, reasons: string[] } {
   const reasons: string[] = []
-  const config = CONFIG.IMAGE_QUALITY.FACE_COMPLETENESS
   let score = 1.0
   
   emitDebug('completeness-check', '开始人脸完整性检测', {
     faceBox: face.box || face.boxRaw,
-    hasLandmarks: !!face.landmarks,
-    hasKeypoints: !!face.keypoints,
     imageSize: `${imageWidth}x${imageHeight}`
   })
 
-  // 1. 检查人脸框的边界完整性
+  // 1. 检查人脸是否在图片中（基本边界检测）
   const faceBox = face.box || face.boxRaw
   if (faceBox && faceBox.length >= 4) {
     const [x, y, width, height] = faceBox
     
-    // 改进的边界检测：检查人脸是否被严重裁剪（而不是"接近"边界）
-    // 允许人脸框的边缘稍微超出或接近边界，只要主要部分在框内即可
-    const margin = config.BOUNDARY_MARGIN  // 现在是 10
-    
-    // 只有当人脸被严重裁剪时才判定为问题
-    const isSeverelyClipped = 
-      x + margin < 0 ||  // 左边严重超出
-      y + margin < 0 ||  // 上边严重超出
-      (x + width - margin) > imageWidth ||  // 右边严重超出
-      (y + height - margin) > imageHeight   // 下边严重超出
-    
-    if (isSeverelyClipped) {
-      const reason = '人脸被严重裁剪，请调整位置'
-      reasons.push(reason)
-      score -= 0.2  // 减少惩罚（从 0.3 → 0.2）
-      emitDebug('completeness-check', reason, { x, y, width, height, margin })
+    // 检查人脸框是否完全在图片范围内
+    if (x < 0 || y < 0 || (x + width) > imageWidth || (y + height) > imageHeight) {
+      reasons.push('人脸超出图片边界，请调整位置')
+      score -= 0.3
+      emitDebug('completeness-check', '人脸超出边界', { x, y, width, height, imageWidth, imageHeight })
     }
+  } else {
+    reasons.push('无法获取人脸框信息')
+    score = 0
   }
 
-  // 2. 检查面部关键点/地标（五官）的完整性
+  // 2. 检查关键五官（眼睛、嘴巴、耳朵）是否存在
   const landmarks = getValidLandmarks(face)
   
   if (landmarks && landmarks.length > 0) {
-    emitDebug('completeness-check', '关键点信息', {
-      totalLandmarks: landmarks.length,
-      firstLandmark: landmarks[0],
-      method: 'getValidLandmarks'
-    })
+    emitDebug('completeness-check', '关键点信息', { totalLandmarks: landmarks.length })
     
-    // 计算检测到的有效关键点数量
-    const totalLandmarks = landmarks.length
-    const validLandmarks = landmarks.filter((lm: any) => {
-      const confidence = getKeypointConfidence(lm)
-      return confidence >= config.KEYPOINT_CONFIDENCE_THRESHOLD
-    }).length
+    // MediaPipe FaceMesh 468 个点的分布：
+    // 眼睛：0-20 (约21个点)
+    // 嘴巴：61-95 (约35个点)
+    // 耳朵：109-122, 338-351 (约28个点)
     
-    const keypointRatio = validLandmarks / totalLandmarks
-    
-    // 改进：使用相对比例，而不是固定的 0.8
-    // 现在改为 0.65，更容易通过
-    if (keypointRatio < config.MIN_KEYPOINT_RATIO) {
-      const reason = `检测到的关键点不足：${(keypointRatio * 100).toFixed(0)}% < ${(config.MIN_KEYPOINT_RATIO * 100).toFixed(0)}%（${validLandmarks}/${totalLandmarks}）`
-      reasons.push(reason)
-      score -= 0.15  // 减少惩罚（从 0.25 → 0.15）
-      emitDebug('completeness-check', reason, { validLandmarks, totalLandmarks, keypointRatio })
-    }
-    
-    // 3. 检查特定五官（眼睛、鼻子、嘴巴）是否都检测到了
-    // 改进：根据关键点总数自适应计算预期数量
     const eyeLandmarks = landmarks.filter((lm: any, idx: number) => 
-      idx < Math.min(10, totalLandmarks * 0.15) && 
-      getKeypointConfidence(lm) >= config.KEYPOINT_CONFIDENCE_THRESHOLD
-    )
-    
-    const noseLandmarks = landmarks.filter((lm: any, idx: number) => 
-      idx >= Math.min(10, totalLandmarks * 0.15) && 
-      idx < Math.min(20, totalLandmarks * 0.4) && 
-      getKeypointConfidence(lm) >= config.KEYPOINT_CONFIDENCE_THRESHOLD
+      idx < 21 && getKeypointConfidence(lm) > 0
     )
     
     const mouthLandmarks = landmarks.filter((lm: any, idx: number) => 
-      idx >= Math.min(20, totalLandmarks * 0.4) && 
-      getKeypointConfidence(lm) >= config.KEYPOINT_CONFIDENCE_THRESHOLD
+      idx >= 61 && idx < 96 && getKeypointConfidence(lm) > 0
     )
     
-    // 改进的五官检测：使用更宽松的阈值和更低的惩罚
-    // 眼睛：从 < 4 改为 < 2
-    if (eyeLandmarks.length < config.MIN_EYE_KEYPOINTS) {
-      const reason = `眼睛检测不充分（${eyeLandmarks.length} 个点），请确保眼睛清晰可见`
-      reasons.push(reason)
-      score -= 0.08  // 减少惩罚（从 0.15 → 0.08）
-      emitDebug('completeness-check', reason, { eyeLandmarks: eyeLandmarks.length, threshold: config.MIN_EYE_KEYPOINTS })
+    const earLandmarks = landmarks.filter((lm: any, idx: number) => 
+      (idx >= 109 && idx <= 122) || (idx >= 338 && idx <= 351) && getKeypointConfidence(lm) > 0
+    )
+    
+    // 检查三个关键部位是否都存在至少 1 个点
+    if (eyeLandmarks.length === 0) {
+      reasons.push('未检测到眼睛')
+      score -= 0.2
     }
     
-    // 鼻子：从 < 2 改为 < 1
-    if (noseLandmarks.length < config.MIN_NOSE_KEYPOINTS) {
-      const reason = `鼻子检测不充分（${noseLandmarks.length} 个点），请调整角度`
-      reasons.push(reason)
-      score -= 0.05  // 减少惩罚（从 0.1 → 0.05）
-      emitDebug('completeness-check', reason, { noseLandmarks: noseLandmarks.length, threshold: config.MIN_NOSE_KEYPOINTS })
+    if (mouthLandmarks.length === 0) {
+      reasons.push('未检测到嘴巴')
+      score -= 0.2
     }
     
-    // 嘴巴：从 < 2 改为 < 1
-    if (mouthLandmarks.length < config.MIN_MOUTH_KEYPOINTS) {
-      const reason = `嘴巴检测不充分（${mouthLandmarks.length} 个点），请调整角度`
-      reasons.push(reason)
-      score -= 0.05  // 减少惩罚（从 0.1 → 0.05）
-      emitDebug('completeness-check', reason, { mouthLandmarks: mouthLandmarks.length, threshold: config.MIN_MOUTH_KEYPOINTS })
+    if (earLandmarks.length === 0) {
+      reasons.push('未检测到耳朵')
+      score -= 0.2
     }
+    
+    emitDebug('completeness-check', '五官检测结果', {
+      eyes: eyeLandmarks.length,
+      mouth: mouthLandmarks.length,
+      ears: earLandmarks.length
+    })
   } else {
-    // 改进：不直接标记为失败，而是降低分数
-    // 可能是 Human.js 版本不同导致的属性名差异
-    const warning = '未检测到标准格式的人脸关键点/地标，这可能是 Human.js 版本或检测结果格式差异'
-    emitDebug('completeness-check', warning, { 
-      faceKeys: Object.keys(face).slice(0, 15),
-      note: '将继续以其他质量指标评估'
-    }, 'warn')
-    
-    // 只进行轻微的扣分，而不是直接失败
-    score -= 0.2  // 减少惩罚（从 0.5 → 0.2）
-    // 不加入 reasons，避免直接失败
+    // 无关键点数据
+    reasons.push('未检测到人脸关键点')
+    score -= 0.3
   }
   
   // 确保分数在 0-1 之间
@@ -1202,8 +1157,7 @@ function checkFaceCompleteness(face: any, imageWidth: number, imageHeight: numbe
   if (!passed) {
     emitDebug('completeness-check', '人脸完整性检测未通过', {
       score: score.toFixed(2),
-      reasons,
-      guidance: '提示：如果人脸符合预期但仍未通过，可能是配置过于严格'
+      reasons
     }, 'warn')
   } else {
     emitDebug('completeness-check', '人脸完整性检测通过', {

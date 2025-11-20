@@ -335,25 +335,26 @@ export const CONFIG = Object.freeze({
     MIN_OVERALL_SCORE: 0.9,
     // 人脸完整性检测相关配置
     FACE_COMPLETENESS: {
-      // 最小可见的关键点数量比例（0-1）- 至少要检测到多少比例的关键点
-      // 原值 0.8 太严格，降至 0.65 以适应真实场景
-      MIN_KEYPOINT_RATIO: 0.65,
-      // 脸部边界安全边距（像素）- 人脸框距离图片边界的最小距离
-      // 原值 20 太严格导致几乎所有正常人脸都被判定为"接近边界"，改为 10
-      BOUNDARY_MARGIN: 10,
-      // 关键点信心阈值（0-1）- 关键点置信度低于此值认为未可靠检测
-      // 推荐范围：0.5-0.7（0.3太低会导致质量不足，0.8太高会导致通过率过低）
-      KEYPOINT_CONFIDENCE_THRESHOLD: 0.5,
-      // 最少需要检测的眼睛关键点数（降低从 4 → 2）
-      MIN_EYE_KEYPOINTS: 2,
-      // 最少需要检测的鼻子关键点数（降低从 2 → 1）
-      MIN_NOSE_KEYPOINTS: 1,
-      // 最少需要检测的嘴巴关键点数（降低从 2 → 1）
-      MIN_MOUTH_KEYPOINTS: 1,
-      // 眼睛检测的最小分数（0-1）
-      MIN_EYE_SCORE: 0.5,
-      // 鼻子检测的最小分数（0-1）
-      MIN_NOSE_SCORE: 0.5
+      // 检测的关键部位是否存在
+      EYES: {
+        // 眼睛区域的关键点索引范围 (MediaPipe FaceMesh)
+        START: 0,
+        END: 21
+      },
+      MOUTH: {
+        // 嘴巴区域的关键点索引范围 (MediaPipe FaceMesh)
+        START: 61,
+        END: 96
+      },
+      EARS: {
+        // 耳朵区域的关键点索引范围 (MediaPipe FaceMesh)
+        LEFT_START: 109,
+        LEFT_END: 122,
+        RIGHT_START: 338,
+        RIGHT_END: 351
+      },
+      // 关键点置信度阈值 (0-1) - 低于此值的关键点不算有效
+      KEYPOINT_CONFIDENCE_THRESHOLD: 0.3
     }
   },
   // 检测超时相关配置
