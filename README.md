@@ -2,6 +2,17 @@
 
 Vue 3 人脸检测组件库，基于 [Human.js](https://github.com/vladmandic/human) 实现，提供三种完整的人脸检测模式。
 
+## 🚀 快速体验
+
+扫描下方二维码即可体验完整的人脸检测功能：
+
+<div align="center">
+  <img src="./doc/扫码刷脸.png" alt="扫码体验人脸检测" width="250" />
+  <p><strong>👆 扫码体验</strong></p>
+</div>
+
+---
+
 ## 功能概览
 
 - ✅ **三种检测模式**：人脸采集、动作活体验证、静默活体检测
@@ -663,60 +674,6 @@ function handleCompleted(data) {
 5. **移动适配**：自动适配移动设备，支持屏幕方向改变
 
 ---
-
-## 文档与工具
-
-### 📚 详细文档
-
-为了帮助你更好地理解和使用图像质量检测功能，我们提供了完整的文档体系：
-
-| 文档 | 用途 | 阅读时间 |
-|------|------|---------|
-| **[README_IMAGE_QUALITY.md](./README_IMAGE_QUALITY.md)** | 完整方案介绍 | 5 分钟 |
-| **[QUICK_START_IMAGE_QUALITY.md](./QUICK_START_IMAGE_QUALITY.md)** | 快速上手指南 | 5 分钟 |
-| **[IMAGE_QUALITY_DETECTION.md](./IMAGE_QUALITY_DETECTION.md)** | 详细技术文档 | 20 分钟 |
-| **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** | 实现原理分析 | 10 分钟 |
-| **[CHECKLIST.md](./CHECKLIST.md)** | 完成清单验证 | 5 分钟 |
-
-### 🧪 交互式测试工具
-
-**ImageQualityTestDemo.vue** - 图像质量检测演示页面
-
-提供实时交互的图像质量检测工具：
-- 🎚️ 动态调整三个质量阈值（boxScore、faceScore、score）
-- 📊 实时显示当前检测的质量评分
-- 📋 完整的检测日志查看器
-- 🖼️ 采集结果图片展示
-- 📈 采集统计信息
-
----
-
-## 项目结构
-
-```
-js-face-detector/
-├── src/
-│   ├── components/
-│   │   ├── FaceDetector.vue           # 主检测组件
-│   │   └── face-detector.ts           # 类型定义和常量
-│   ├── pages/
-│   │   ├── FaceCollectorDemo.vue      # 采集模式演示
-│   │   ├── AliveCheckerDemo.vue       # 活体检测模式演示
-│   │   ├── SilentLivenessDemo.vue     # 静默活体检测演示
-│   │   └── ImageQualityTestDemo.vue   # 图像质量检测演示 ⭐ 新增
-│   ├── App.vue                        # 应用主组件
-│   └── main.ts                        # 应用入口
-├── README.md                          # 项目说明
-├── README_IMAGE_QUALITY.md            # 图像质量检测方案 ⭐ 新增
-├── QUICK_START_IMAGE_QUALITY.md       # 快速上手指南 ⭐ 新增
-├── IMAGE_QUALITY_DETECTION.md         # 详细技术文档 ⭐ 新增
-├── IMPLEMENTATION_SUMMARY.md          # 实现原理分析 ⭐ 新增
-├── CHECKLIST.md                       # 完成清单 ⭐ 新增
-├── COMPLETION_REPORT.md               # 完成报告 ⭐ 新增
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
-```
 
 ## License
 
