@@ -754,6 +754,7 @@ function handleCollection(): void {
 
   emitDebug('collection', '采集完成，选取最佳质量图片', { 
     bestScore: bestScore.toFixed(2),
+    totalCount: detectionState.collectedImages.total()
   })
 
   emit(FACE_DETECTOR_EVENTS.FACE_COLLECTED, { 

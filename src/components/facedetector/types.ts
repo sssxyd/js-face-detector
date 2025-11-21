@@ -148,6 +148,7 @@ export interface WebGLStatus {
 export class ScoredList<T> {
   private maxSize: number
   private items: Array<{ item: T; score: number }>
+  private totalCount: number = 0
 
   constructor(maxSize = 5) {
     this.maxSize = maxSize
@@ -155,6 +156,7 @@ export class ScoredList<T> {
   }
 
   add(item: T, score: number): void {
+    this.totalCount++
     this.items.push({ item, score })
     // 按 score 降序排序
     this.items.sort((a, b) => b.score - a.score)
@@ -186,5 +188,9 @@ export class ScoredList<T> {
 
   size(): number {
     return this.items.length
+  }
+
+  total(): number {
+    return this.totalCount
   }
 }

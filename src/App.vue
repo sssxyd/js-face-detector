@@ -20,8 +20,8 @@
         </button>
         <button 
           class="nav-btn" 
-          :class="{ active: currentPage === 'liveness' }"
-          @click="currentPage = 'liveness'"
+          :class="{ active: currentPage === 'action_liveness' }"
+          @click="currentPage = 'action_liveness'"
         >
           活体验证
         </button>
