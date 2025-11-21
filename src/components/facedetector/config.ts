@@ -53,7 +53,9 @@ export const CONFIG = Object.freeze({
     // 最小人脸网格分数（0-1）- 网格置信度低于此值表示图像模糊或质量差
     MIN_FACE_SCORE: 0.8,
     // 最小综合分数（0-1）- 综合评分低于此值表示图像质量不足
-    MIN_OVERALL_SCORE: 0.8
+    MIN_OVERALL_SCORE: 0.8,
+    // 连续采集次数 - 连续采集N次合格图片，从中选取质量最好的一张
+    COLLECTION_COUNT: 3
   },
   // 检测超时相关配置
   TIMEOUT: {

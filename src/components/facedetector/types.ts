@@ -70,6 +70,7 @@ export interface LivenessDetectedData {
  * 人脸采集数据
  */
 export interface FaceCollectedData {
+  qualityScore: number  // 图像质量评分 (0-1)
   imageData: string | null
 }
 
@@ -77,6 +78,7 @@ export interface FaceCollectedData {
  * 动作/静默活体检测完成数据
  */
 export interface LivenessCompletedData {
+  qualityScore: number  // 图像质量评分 (0-1)
   imageData: string | null
   liveness: number  // 活体检测得分 (0-1)
 }
@@ -141,4 +143,48 @@ export interface WebGLStatus {
   renderer?: string
   version?: string
   error?: string
+}
+
+export class ScoredList<T> {
+  private maxSize: number
+  private items: Array<{ item: T; score: number }>
+
+  constructor(maxSize = 5) {
+    this.maxSize = maxSize
+    this.items = []
+  }
+
+  add(item: T, score: number): void {
+    this.items.push({ item, score })
+    // 按 score 降序排序
+    this.items.sort((a, b) => b.score - a.score)
+    // 超出容量时删除最低分的
+    if (this.items.length > this.maxSize) {
+      this.items.pop()
+    }
+  }
+
+  getBestItem(): T | null {
+    return this.items[0]?.item ?? null
+  }
+
+  getBestScore(): number{
+    return this.items[0]?.score ?? 0
+  }
+
+  getAll(): T[] {
+    return this.items.map(x => x.item)
+  }
+
+  getAllWithScores(): Array<{ item: T; score: number }> {
+    return [...this.items]
+  }
+
+  clear(): void {
+    this.items = []
+  }
+
+  size(): number {
+    return this.items.length
+  }
 }

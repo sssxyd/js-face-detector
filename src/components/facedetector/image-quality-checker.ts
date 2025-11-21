@@ -98,7 +98,7 @@ export function checkImageQuality(
         faceInBounds = 0
         reasons.push('人脸超出边界')
       }
-    }  
+    }
  }
   
   // ===== 检查检测框质量 =====
@@ -115,8 +115,15 @@ export function checkImageQuality(
     reasons.push(faceScoreResult.description)
   }
   
-  const imageQualityScore = Math.min(boxScoreResult.value, faceScoreResult.value, faceInBounds)
-  
+  let imageQualityScore = 1
+  // 人脸超出边界时，直接评分为0，否则正常评分
+  if (faceInBounds === 0) {
+    imageQualityScore = 0
+  } else {
+    // 加权平均：检测框(40%) + 人脸网格(40%) + 边界完整(20%)
+    imageQualityScore = 0.4 * boxScoreResult.value + 0.4 * faceScoreResult.value + 0.2 * 1.0  // faceInBounds 已确认为 1
+  }
+
   const passed = reasons.length === 0 && imageQualityScore >= CONFIG.IMAGE_QUALITY.MIN_OVERALL_SCORE
   
   return {

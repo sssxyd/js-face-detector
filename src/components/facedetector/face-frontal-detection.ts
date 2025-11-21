@@ -6,6 +6,7 @@
  * 2. 角度分析方法（备选/精确）
  */
 
+import { FaceResult, GestureResult } from '@vladmandic/human'
 import { CONFIG } from './config'
 
 /**
@@ -39,8 +40,8 @@ export interface AngleAnalysisResult {
  * 优先使用手势识别方法，如果不可用则使用角度分析
  * 直接使用 CONFIG.FACE_FRONTAL 中的参数，不支持运行时覆盖
  * 
- * @param {any} face - 人脸检测结果（包含 rotation 信息）
- * @param {any} gestures - 检测到的手势/表情数组
+ * @param {FaceResult} face - 人脸检测结果（包含 rotation 信息）
+ * @param {Array<GestureResult>} gestures - 检测到的手势/表情数组
  * @returns {number} 正对度评分 (0-1)，1 表示完全正对
  * 
  * @example
@@ -49,7 +50,7 @@ export interface AngleAnalysisResult {
  *   console.log('人脸足够正对')
  * }
  */
-export function checkFaceFrontal(face: any, gestures: any): number {
+export function checkFaceFrontal(face: FaceResult, gestures: Array<GestureResult>): number {
   // 优先使用 gestures 中的 facing center 判定
   if (gestures && gestures.length > 0) {
     const frontalScore = checkFaceFrontalWithGestures(gestures)
@@ -67,19 +68,19 @@ export function checkFaceFrontal(face: any, gestures: any): number {
  * 
  * 从 Human.js 返回的手势中查找 "facing center" 标志
  * 
- * @param {any} gestures - Human.js 检测到的手势数组
+ * @param {Array<GestureResult>} gestures - Human.js 检测到的手势数组
  * @returns {number} 评分 (0-1)，0 表示未检测到相关手势
  * 
  * @example
  * const score = checkFaceFrontalWithGestures(result.gesture)
  */
-export function checkFaceFrontalWithGestures(gestures: any): number {
-  if (!gestures || !Array.isArray(gestures)) {
+export function checkFaceFrontalWithGestures(gestures: Array<GestureResult>): number {
+  if (!gestures) {
     return 0
   }
   
   // 检查是否有 facing center 手势
-  const hasFacingCenter = gestures.some((g: any) => {
+  const hasFacingCenter = gestures.some((g: GestureResult) => {
     if (!g || !g.gesture) return false
     return g.gesture.includes('facing center') || g.gesture.includes('facing camera')
   })
@@ -99,13 +100,13 @@ export function checkFaceFrontalWithGestures(gestures: any): number {
  * 使用加权评分：yaw (60%) + pitch (25%) + roll (15%)
  * 直接使用 CONFIG.FACE_FRONTAL 中的参数
  * 
- * @param {any} face - 人脸检测结果
+ * @param {FaceResult} face - 人脸检测结果
  * @returns {number} 正对度评分 (0-1)
  * 
  * @example
  * const score = checkFaceFrontalWithAngles(face)
  */
-export function checkFaceFrontalWithAngles(face: any): number {
+export function checkFaceFrontalWithAngles(face: FaceResult): number {
   // 获取角度信息
   const angles = extractFaceAngles(face)
   
@@ -142,10 +143,10 @@ export function checkFaceFrontalWithAngles(face: any): number {
  * 
  * 返回标准化的 yaw、pitch、roll 角度值（单位：度）
  * 
- * @param {any} face - Human.js 人脸检测结果
+ * @param {FaceResult} face - Human.js 人脸检测结果
  * @returns {AngleAnalysisResult} 包含角度和评分的结果对象
  */
-export function extractFaceAngles(face: any): AngleAnalysisResult {
+export function extractFaceAngles(face: FaceResult): AngleAnalysisResult {
   // 从 face.rotation.angle 获取角度信息
   const ang = face?.rotation?.angle || { yaw: 0, pitch: 0, roll: 0 }
   
@@ -163,7 +164,7 @@ export function extractFaceAngles(face: any): AngleAnalysisResult {
  * 返回每个角度维度的详细评分和状态
  * 直接使用 CONFIG.FACE_FRONTAL 中的参数
  * 
- * @param {any} face - 人脸检测结果
+ * @param {FaceResult} face - 人脸检测结果
  * @returns {object} 包含各维度评分的详细对象
  * 
  * @example
@@ -171,7 +172,7 @@ export function extractFaceAngles(face: any): AngleAnalysisResult {
  * console.log(details.yawScore)  // 0.85
  * console.log(details.issues)    // ['Yaw 角度超过阈值']
  */
-export function getAngleAnalysisDetails(face: any): Record<string, any> {
+export function getAngleAnalysisDetails(face: FaceResult): Record<string, any> {
   const angles = extractFaceAngles(face)
   
   const yawThreshold = CONFIG.FACE_FRONTAL.YAW_THRESHOLD

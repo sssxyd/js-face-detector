@@ -20,15 +20,16 @@
 // 导入 Vue 3 Composition API 相关方法
 import { ref, computed, onMounted, onUnmounted, Ref, reactive } from 'vue'
 // 导入人脸检测库
-import Human from '@vladmandic/human'
+import Human, { FaceResult, GestureResult } from '@vladmandic/human'
 // 导入类型定义
 import type { FaceCollectedData, LivenessCompletedData, ErrorData, FaceDetectorProps, LivenessDetectedData, DebugData, StatusPromptData } from './types'
 import { CONFIG } from './config'
 import { DetectionMode, LivenessAction, ErrorCode, PromptCode} from './enums'
 import { FACE_DETECTOR_EVENTS, BORDER_COLOR_STATES, PROMPT_CODE_DESCRIPTIONS, ACTION_DESCRIPTIONS } from './constants'
 import { detectBrowserInfo, isWebGLAvailable, getWebGLInfo } from './utils'
+import { ScoredList } from './types'
 // 导入人脸正对度检测模块
-import { checkFaceFrontal as checkFaceFrontalModule } from './face-frontal-detection'
+import { checkFaceFrontal } from './face-frontal-detection'
 // 导入图像质量检测模块
 import { checkImageQuality } from './image-quality-checker'
 
@@ -110,27 +111,20 @@ let statusPromptTextClearTimeoutId: ReturnType<typeof setTimeout> | null = null
 // ===== 检测超时相关变量 =====
 let detectionStartTime: number = 0
 
-// ===== 活体检测相关类型定义 =====
 interface DetectionState {
-  // === 流程控制 ===
-  isLivenessStarted: boolean
-  isSilentLivenessStarted: boolean
-  
   // === 活体动作检测 ===
   completedActions: Set<LivenessAction>
   currentAction: LivenessAction | null
   
   // === 图片采集 ===
-  baselineImage: string | null
+  collectedImages: ScoredList<string>  // 连续采集的图片数组
 }
 
 // ===== 活体检测相关变量 =====
 const detectionState = reactive<DetectionState>({
-  isLivenessStarted: false,
-  isSilentLivenessStarted: false,
   completedActions: new Set(),
   currentAction: null,
-  baselineImage: null
+  collectedImages: new ScoredList<string>(CONFIG.IMAGE_QUALITY.COLLECTION_COUNT),
 })
 
 /**
@@ -526,7 +520,7 @@ function resetDetectionState(): void {
   
   // 重置活体检测相关状态
   detectionState.completedActions.clear()
-  detectionState.baselineImage = null
+  detectionState.collectedImages.clear()
   detectionState.currentAction = null
   actionPromptText.value = ''
   statusPromptText.value = ''
@@ -685,8 +679,10 @@ function stopDetection(success: boolean = false): void {
   
   if (stream) stream.getTracks().forEach(t => t.stop())
 
-  if (success && detectionState.baselineImage) {
-    displayResultImage(detectionState.baselineImage)
+  // 显示结果图片
+  const bestImage = detectionState.collectedImages.getBestItem()
+  if (success && bestImage) {
+    displayResultImage(bestImage)
   } else {
     const lastFrameImageBase64 = captureFrame()
     if (lastFrameImageBase64) {
@@ -705,73 +701,33 @@ function stopDetection(success: boolean = false): void {
 
 /**
  * 处理检测到单张人脸的情况
- * @param {number} faceRatio - 人脸占画面比例 (%)
- * @param {number} frontal - 人脸正对度评分 (0-100)
- * @param {Array} gestures - 检测到的手势/表情
+ * @param {FaceResult} face - 当前帧图像的人脸检测结果
+ * @param {Array<GestureResult>} gestures - 检测到的手势/表情
  */
-function handleSingleFace(faceRatio: number, frontal: number, gestures: any): void {
-  // 更新边框颜色
-  updateBorderColor(faceRatio, frontal)
-  
-  // 判断人脸是否符合条件：大小在范围内，且正对度符合要求
-  if (faceRatio > props.minFaceRatio && faceRatio < props.maxFaceRatio && frontal >= props.minFrontal) {
-    emitDebug('detection', '检测到符合条件的人脸', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4), mode: props.mode })
-    
-    // 抛出正常状态提示，清空动作文本
-    emitStatusPrompt(PromptCode.NORMAL_STATE)
-    
-    // 根据检测模式处理
-    if (props.mode === DetectionMode.COLLECTION) {
-      handleCollectionMode()
-    } else if (props.mode === DetectionMode.SILENT_LIVENESS) {
-      handleSilentLivenessMode()
-    } else if (props.mode === DetectionMode.LIVENESS) {
-      handleLivenessMode(gestures)
-    }
-  } else {
-    // 人脸不符合条件，根据具体原因抛出提示
-    let promptCode: PromptCode | null = null
-    const promptData: Record<string, any> = {}
-    
-    if (faceRatio <= props.minFaceRatio) {
-      promptCode = PromptCode.FACE_TOO_SMALL
-      promptData.size = faceRatio
-    } else if (faceRatio >= props.maxFaceRatio) {
-      promptCode = PromptCode.FACE_TOO_LARGE
-      promptData.size = faceRatio
-    } else if (frontal < props.minFrontal) {
-      promptCode = PromptCode.FACE_NOT_FRONTAL
-      promptData.frontal = frontal
-    }
-    
-    if (promptCode) {
-      emitStatusPrompt(promptCode, promptData)
-    }
-    
-    emitDebug('detection', '人脸不符合条件', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4), minRatio: props.minFaceRatio, maxRatio: props.maxFaceRatio, minFrontal: props.minFrontal }, 'info')
+function handleSingleFace(face: FaceResult, gestures: Array<GestureResult>): void {
+  // 未采集到足够多的照片，继续采集
+  if(detectionState.collectedImages.size() < CONFIG.IMAGE_QUALITY.COLLECTION_COUNT){
+    // 采集模式下，继续采集图片
     scheduleNextDetection()
+    return
   }
-}
-
-/**
- * 验证活体检测是否应该中止 - 检查人脸数量变化
- * @param {number} faceCount - 人脸数量
- * @returns {boolean} 如果应该中止检测则返回 true
- */
-function shouldStopLivenessOnFaceCountChange(faceCount: number): boolean {
-  // 在 LIVENESS 模式下，已开始检测但人脸数量不为 1 时应中止
-  if (props.mode === DetectionMode.LIVENESS && detectionState.isLivenessStarted && faceCount !== 1) {
-    emitDebug('liveness', '活体检测期间人脸数量变化', { expected: 1, actual: faceCount }, 'error')
-    return true
+  // 已采集足够多的照片，开始模式检测
+  switch(props.mode){
+    case DetectionMode.LIVENESS:
+      handleActionLivenessDetection(gestures)
+      break
+    case DetectionMode.SILENT_LIVENESS:
+      handleSilentLivenessDetection(face)
+      break
+    case DetectionMode.COLLECTION:
+      handleCollection()
+      break
+    default:
+      emitDebug('detection', '未知检测模式', { mode: props.mode }, 'error')
+      emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.DETECTION_ERROR, message: `未知检测模式: ${props.mode}` })
+      stopDetection()
+      break
   }
-  
-  // 在 SILENT_LIVENESS 模式下，已开始检测但人脸数量不为 1 时应中止
-  if (props.mode === DetectionMode.SILENT_LIVENESS && detectionState.isSilentLivenessStarted && faceCount !== 1) {
-    emitDebug('liveness', '静默活体检测期间人脸数量变化', { expected: 1, actual: faceCount }, 'error')
-    return true
-  }
-  
-  return false
 }
 
 /**
@@ -789,122 +745,100 @@ function handleMultipleFaces(faceCount: number): void {
     emitStatusPrompt(PromptCode.MULTIPLE_FACES_DETECTED, { count: faceCount })
   }
   
-  // 检查活体检测期间是否发生人脸数量变化
-  if (shouldStopLivenessOnFaceCountChange(faceCount)) {
-    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.FACE_COUNT_CHANGED, message: `检测到人脸数量变化，期望1张，实际${faceCount}张。请保持正脸对着摄像头，重新开始检测。` })
-    stopDetection()
-    return
+  // 如果已经采集了一张以上合格照片，则重置
+  if (detectionState.collectedImages.size() > 0) {
+    emitDebug('detect', '检测期间人脸数量变化，重置检测流程', { expected: 1, actual: faceCount }, 'error')
+    detectionState.collectedImages.clear()
   }
 
   scheduleNextDetection()
 }
 
 /**
- * 处理采集模式：检测到合格人脸后截取图片
+ * 处理人脸采集：从已经采集的图片中选取最佳质量图片
  */
-function handleCollectionMode(): void {
-  // 如果已经采集过基线图片，说明已处于质量检测中，继续收集更好质量的图片
-  if (detectionState.baselineImage && !isDetecting.value) {
-    // 检测完成
-    return
-  }
-  
-  // 第一次采集 - 先采集图片并检测质量
-  detectionState.baselineImage = captureFrame()
-  
-  // 当前已有人脸检测结果，从全局 detect 方法中获取的 result 中提取人脸数据
-  // 但由于 detect 中的 result 是局部变量，我们通过 human.result 获取最新检测结果
-  if (human && human.result && human.result.face && human.result.face.length > 0) {
-    const currentFace = human.result.face[0]
-    const qualityCheck = checkFaceImageQuality(currentFace, videoWidth.value, videoHeight.value)
-    
-    if (qualityCheck.passed) {
-      emitStatusPrompt(PromptCode.GOOD_IMAGE_QUALITY, {quality: qualityCheck.score.toFixed(2) })
-      emitDebug('quality', '图像质量符合要求，采集完成', { score: qualityCheck.score.toFixed(2) })
-      emit(FACE_DETECTOR_EVENTS.FACE_COLLECTED, { 
-        imageData: detectionState.baselineImage 
-      })
-      videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
-      stopDetection(true)
-    } else {
-      emitStatusPrompt(PromptCode.POOR_IMAGE_QUALITY, {quality: qualityCheck.score.toFixed(2) })
-      emitDebug('quality', '图像质量不足，继续采集更好质量的图片', { 
-        score: qualityCheck.score.toFixed(2),
-        reasons: qualityCheck.reasons
-      }, 'warn')
-      // 重置基线图片，继续采集
-      detectionState.baselineImage = null
-      // 继续检测
-      scheduleNextDetection()
-      return
-    }
-  } else {
-    // 无法获取人脸检测结果 - 这是一个错误条件，不应该直接通过
-    // 可能原因：Human.js 检测结果不完整或格式异常
-    emitDebug('quality', '无法获取人脸检测结果用于质量评估', { 
-      hasHuman: !!human, 
-      hasResult: !!human?.result, 
-      hasFaces: !!human?.result?.face,
-      faceCount: human?.result?.face?.length || 0
-    }, 'error')
+function handleCollection(): void {
+  const bestImage = detectionState.collectedImages.getBestItem()
+  if (!bestImage) {
+    emitDebug('collection', '无法选取最佳质量图片，采集列表为空', {}, 'error')
     emit(FACE_DETECTOR_EVENTS.ERROR, { 
       code: ErrorCode.DETECTION_ERROR, 
-      message: '检测结果格式异常，无法评估图像质量。请重新尝试。' 
+      message: '采集图片列表为空，无法选取最佳图片。请重新尝试。' 
     })
     videoBorderColor.value = BORDER_COLOR_STATES.ERROR
     stopDetection()
+    return
   }
+  const bestScore = detectionState.collectedImages.getBestScore()
+
+  emitDebug('collection', '采集完成，选取最佳质量图片', { 
+    bestScore: bestScore.toFixed(2),
+  })
+
+  emit(FACE_DETECTOR_EVENTS.FACE_COLLECTED, { 
+    qualityScore: bestScore,
+    imageData: bestImage
+  })
+
+  videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
+  stopDetection(true)  
 }
 
 /**
- * 处理静默活体检测模式：采集图片后自动进行活体检测
+ * 处理静默活体检测模式：对当前帧进行活体检测
  */
-function handleSilentLivenessMode(): void {
-  if (!detectionState.isSilentLivenessStarted) {
-    emitDebug('liveness', '静默活体检测开始')
-    detectionState.baselineImage = captureFrame()  // 捕获完整摄像头照片
-    
-    // 进行图像质量检查
-    if (human && human.result && human.result.face && human.result.face.length > 0) {
-      const currentFace = human.result.face[0]
-      const qualityCheck = checkFaceImageQuality(currentFace, videoWidth.value, videoHeight.value)
-      
-      if (!qualityCheck.passed) {
-        emitStatusPrompt(PromptCode.POOR_IMAGE_QUALITY, {quality: qualityCheck.score.toFixed(2) })
-        emitDebug('quality', '采集的图像质量不足，继续采集', { 
-          score: qualityCheck.score.toFixed(2),
-          reasons: qualityCheck.reasons
-        }, 'warn')
-        // 重置基线图片，继续采集更好质量的帧
-        detectionState.baselineImage = null
-        scheduleNextDetection()
-        return
-      }
-      
-      emitStatusPrompt(PromptCode.GOOD_IMAGE_QUALITY, {quality: qualityCheck.score.toFixed(2) })
-      emitDebug('quality', '采集的图像质量符合要求', { score: qualityCheck.score.toFixed(2) })
-    }
-    
-    detectionState.isSilentLivenessStarted = true
-    // 异步执行活体检测
-    performSilentLivenessDetection()
-  } else {
-    // 已经开始了静默活体检测，继续捕获新的图片进行检测
-    emitDebug('liveness', '继续静默活体检测，捕获新帧')
-    detectionState.baselineImage = captureFrame()  // 捕获新的图片
-    
-    // 异步执行活体检测
-    performSilentLivenessDetection()
-  }
+function handleSilentLivenessDetection(face: FaceResult): void {
+  // 对当前帧进行活体检测
+  performSilentLivenessDetection(face)
 }
 
 /**
- * 处理活体检测模式：需要用户执行指定动作
+ * 处理动作活体检测：检查当前帧是否完成指定动作
  * @param {Array} gestures - 检测到的手势/表情
  */
-function handleLivenessMode(gestures: any): void {
-  verifyLiveness(gestures)
+function handleActionLivenessDetection(gestures: Array<GestureResult>): void {
+  // 检查是否全部动作完成
+  if (detectionState.completedActions.size >= normalizedLivenessActionCount.value) {
+    completeActionLiveness()
+    return
+  }
+  
+  // 获取当前需要检测的随机动作
+  if (!detectionState.currentAction) {
+    selectNextRandomAction()
+    emitDebug('liveness', '未选择任何动作', {}, 'warn')
+    scheduleNextDetection()
+    return
+  }
+  
+  // 检测当前帧是否有指定的动作
+  const detected = detectAction(detectionState.currentAction, gestures)
+  
+  // 如果检测到动作
+  if (detected) {
+    emitDebug('liveness', '检测到动作', { action: detectionState.currentAction })
+    
+    // 标记该动作已完成
+    detectionState.completedActions.add(detectionState.currentAction)
+    
+    // 清空当前动作信息，准备选择下一个
+    detectionState.currentAction = null
+    
+    // 清除超时定时器
+    if (actionTimeoutId) clearTimeout(actionTimeoutId)
+    actionTimeoutId = null
+    actionPromptText.value = ''
+
+    if (detectionState.completedActions.size >= normalizedLivenessActionCount.value) {
+      completeActionLiveness()
+      return
+    } else {
+      // 选择下一个动作
+      selectNextRandomAction()
+    }
+  }
+  // 继续检测下一帧
+  scheduleNextDetection()
 }
 
 /**
@@ -963,14 +897,6 @@ async function detect(): Promise<void> {
     // 获取检测到的所有人脸 - 尝试多种属性名（兼容不同版本的 Human.js）
     let faces = result.face || []
     
-    // 如果 face 属性为空，尝试其他可能的属性名
-    if (!faces || faces.length === 0) {
-      faces = (result as any).faces || (result as any).detections || []
-      if (faces.length > 0) {
-        emitDebug('detection', '使用备选属性名获取人脸数据', { propertyUsed: 'faces/detections' })
-      }
-    }
-    
     // 每 30 帧记录一次检测结果
     if (detectionStartTime % 3000 < 100) {  // 大约每 3 秒记录一次
       emitDebug('detection', '检测结果', { 
@@ -993,13 +919,54 @@ async function detect(): Promise<void> {
       
       // 计算人脸占视频画面的比例 (0-1)
       const faceRatio = (faceBox[2] * faceBox[3]) / (videoWidth.value * videoHeight.value)
-      
+      updateBorderColor(faceRatio)
+      if (faceRatio <= props.minFaceRatio) {
+        emitStatusPrompt(PromptCode.FACE_TOO_SMALL, { size: faceRatio })
+        emitDebug('detection', '人脸太小', { ratio: faceRatio.toFixed(4), minRatio: props.minFaceRatio, maxRatio: props.maxFaceRatio }, 'info')
+        scheduleNextDetection()
+        return
+      } 
+      if (faceRatio >= props.maxFaceRatio) {
+        emitStatusPrompt(PromptCode.FACE_TOO_LARGE, { size: faceRatio })
+        emitDebug('detection', '人脸太大', { ratio: faceRatio.toFixed(4), minRatio: props.minFaceRatio, maxRatio: props.maxFaceRatio }, 'info')
+        scheduleNextDetection()
+        return
+      } 
+
       // 检查人脸是否正对摄像头 (0-1 评分)
-      const frontal = checkFaceFrontal(face, result.gesture)
+      let frontal = 1
+      // 仅在采集阶段检查正对度，校验阶段不检查
+      if (detectionState.collectedImages.size() < CONFIG.IMAGE_QUALITY.COLLECTION_COUNT) {
+        frontal = checkFaceFrontal(face, result.gesture)
+        updateBorderColor(faceRatio, frontal)
+        if (frontal < props.minFrontal) {
+          emitStatusPrompt(PromptCode.FACE_NOT_FRONTAL, { frontal: frontal })
+          emitDebug('detection', '人脸正对度不够', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4), minFrontal: props.minFrontal }, 'info')
+          scheduleNextDetection()
+          return
+        }        
+      }
       
-      emitDebug('detection', '检测到单个人脸', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4) })
-      
-      handleSingleFace(faceRatio, frontal, result.gesture)
+      const imageQuality = checkImageQuality(face, videoWidth.value, videoHeight.value)
+      updateBorderColor(faceRatio, frontal, imageQuality.passed)
+      if (!imageQuality.passed) {
+        emitStatusPrompt(PromptCode.POOR_IMAGE_QUALITY, { quality: imageQuality.score.toFixed(2) })
+        emitDebug('detection', '人脸图像质量不符合要求', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4), qualityScore: imageQuality.score.toFixed(2), reasons: imageQuality.reasons }, 'info')
+        scheduleNextDetection()
+        return
+      }
+
+      const frameImage = captureFrame()
+      if (!frameImage) {
+        emitDebug('detection', '捕获人脸图像失败', {}, 'warn')
+        scheduleNextDetection()
+        return
+      }
+
+      detectionState.collectedImages.add(frameImage, imageQuality.score)
+
+      emitDebug('detection', '检测到单个人脸', { ratio: faceRatio.toFixed(4), frontal: frontal.toFixed(4), quality: imageQuality.score.toFixed(4) })
+      handleSingleFace(face, result.gesture)
     } else {
       // 处理多人脸或无人脸的情况
       emitDebug('detection', '多人脸/无人脸', { count: faces.length })
@@ -1012,124 +979,29 @@ async function detect(): Promise<void> {
   }
 }
 
-/**
- * 检查图像质量是否符合要求（严格两步检测）
- * 
- * 在此方法内进行两步独立检测：
- * 1. 检测图像质量（boxScore, faceScore）- 必须达到质量系数
- *    - 如果不达标，触发 status-prompt 并返回 false
- * 2. 检测人脸完整性（eyes, nose, mouth, ears等）- 必须达到完整度系数
- *    - 如果不达标，触发 status-prompt 并返回 false
- * 
- * 两者都必须达标才返回 true
- * 
- * @param {Object} face - 人脸检测结果
- * @param {number} imageWidth - 图片宽度（可选，默认为视频宽度）
- * @param {number} imageHeight - 图片高度（可选，默认为视频高度）
- * @returns {Object} 包含质量评估结果的对象 { passed: boolean, score: number, reasons: string[] }
- */
-function checkFaceImageQuality(face: any, imageWidth?: number, imageHeight?: number): { passed: boolean, score: number, reasons: string[] } {
-  // 如果未提供图片尺寸，使用视频尺寸
-  const imgWidth = imageWidth || videoWidth.value
-  const imgHeight = imageHeight || videoHeight.value
-  
-  const reasons: string[] = []
-  
-  const qualityOnlyResult = checkImageQuality(face, imgWidth, imgHeight)
-  
-  if (!qualityOnlyResult.passed) {
-    // 图像质量不达标，直接返回
-    reasons.push(...qualityOnlyResult.reasons)
-    emitStatusPrompt(PromptCode.POOR_IMAGE_QUALITY, { quality: qualityOnlyResult.score.toFixed(2) })
-    emitDebug('quality', '图像质量检测未通过', {
-      score: qualityOnlyResult.score.toFixed(2),
-      reasons: qualityOnlyResult.reasons
-    }, 'warn')
-    return { passed: false, score: qualityOnlyResult.score, reasons }
-  }
-
-  emitStatusPrompt(PromptCode.GOOD_IMAGE_QUALITY, { quality: qualityOnlyResult.score.toFixed(2) })
-  emitDebug('quality', '图像质量与完整性检测通过', {
-    imageQualityScore: qualityOnlyResult.score.toFixed(2),
-  })
-  
-  return { passed: true, score: qualityOnlyResult.score, reasons }
-}
-
-/**
- * 检查人脸是否正对摄像头（使用独立模块）
- * @param {Object} face - 人脸检测结果
- * @param {Array} gestures - 检测到的手势/表情
- * @returns {number} 正对度评分 (0-1)
- */
-function checkFaceFrontal(face: any, gestures: any): number {
-  // 使用专用的人脸正对度检测模块
-  const score = checkFaceFrontalModule(face, gestures)
-  
-  emitDebug('detection', '人脸正对度检测', {
-    score: score.toFixed(3),
-    level: score >= 0.9 ? '优秀' : score >= 0.75 ? '良好' : score >= 0.6 ? '一般' : '较差'
-  })
-  
-  return score
-}
-
-/**
- * 活体检测验证：检测用户是否执行指定的活体动作
- * @param {Array} gestures - 检测到的手势/表情
- */
-function verifyLiveness(gestures: any): void {
-  // 如果是第一次检测到符合条件的人脸，先捕获并暂存（不立即emit）
-  if (detectionState.completedActions.size === 0 && !detectionState.baselineImage) {
-    emitDebug('liveness', '首次检测到符合条件的人脸')
-    detectionState.baselineImage = captureFrame()  // 捕获完整摄像头照片
-    // 标记活体检测已开始，后续 detect 方法需要检查人脸数量
-    detectionState.isLivenessStarted = true
-    
-    // 选择第一个随机动作
-    selectNextRandomAction()
-  }
-  
-  // 检查是否全部动作完成
-  if (detectionState.completedActions.size >= normalizedLivenessActionCount.value) {
-    emitDebug('liveness', '所有活体动作已完成')
-    // 设置成功颜色
-    videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
-    // 抛出 liveness-completed 事件
-    emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, { 
-      imageData: detectionState.baselineImage, 
-      liveness: 100 }
-    )
-    stopDetection(true)
-    return
-  }  // 获取当前需要检测的随机动作
-  if (!detectionState.currentAction) {
-    emitDebug('liveness', '未选择任何动作', {}, 'warn')
-    scheduleNextDetection()
+function completeActionLiveness(): void {
+  emitDebug('liveness', '所有活体动作已完成')
+  // 设置成功颜色
+  videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
+  // 抛出 liveness-completed 事件
+  const bestImage = detectionState.collectedImages.getBestItem()
+  if(!bestImage){
+    emitDebug('liveness', '无法选取最佳质量图片，采集列表为空', {}, 'error')
+    emit(FACE_DETECTOR_EVENTS.ERROR, { 
+      code: ErrorCode.DETECTION_ERROR, 
+      message: '采集图片列表为空，无法选取最佳图片。请重新尝试。' 
+    })
+    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
+    stopDetection()
     return
   }
-  
-  // 检测当前帧是否有指定的动作
-  const detected = detectAction(detectionState.currentAction, gestures)
-  
-  // 如果检测到动作
-  if (detected) {
-    emitDebug('liveness', '检测到动作', { action: detectionState.currentAction })
-    
-    // 标记该动作已完成
-    detectionState.completedActions.add(detectionState.currentAction)
-    
-    // 清空当前动作信息，准备选择下一个
-    detectionState.currentAction = null
-    
-    // 清除超时定时器
-    if (actionTimeoutId) clearTimeout(actionTimeoutId)
-    actionTimeoutId = null
-    actionPromptText.value = ''
-  }
-  
-  // 继续检测下一帧
-  scheduleNextDetection()
+  const bestScore = detectionState.collectedImages.getBestScore()
+  emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, { 
+    qualityScore: bestScore,
+    imageData: bestImage, 
+    liveness: 100 }
+  )
+  stopDetection(true)
 }
 
 /**
@@ -1172,7 +1044,7 @@ function selectNextRandomAction(): void {
  * @param {number} countOrRatio - 人脸数量或人脸占画面比例
  * @param {number} frontal - 人脸正对度评分 (可选)
  */
-function updateBorderColor(countOrRatio: number, frontal?: number): void {
+function updateBorderColor(countOrRatio: number, frontal?: number, quality?: boolean): void {
   // 判断面部信息状态
   if (countOrRatio === 0) {
     // 未检测到人脸：灰色
@@ -1185,11 +1057,12 @@ function updateBorderColor(countOrRatio: number, frontal?: number): void {
     const faceRatio = countOrRatio
     const isSizeValid = faceRatio > props.minFaceRatio && faceRatio < props.maxFaceRatio
     const isFrontalValid = frontal >= props.minFrontal
-    
-    if (isSizeValid && isFrontalValid) {
+    const isQualityValid = quality !== undefined ? quality : true
+
+    if (isSizeValid && isFrontalValid && isQualityValid) {
       // 条件都满足：绿色
       videoBorderColor.value = BORDER_COLOR_STATES.PERFECT
-    } else if (isSizeValid || isFrontalValid) {
+    } else if (isSizeValid || isFrontalValid || isQualityValid) {
       // 条件部分满足：黄色
       videoBorderColor.value = BORDER_COLOR_STATES.PARTIAL
     } else {
@@ -1331,188 +1204,110 @@ function captureFrame(): string | null {
 
 /**
  * 进行静默活体检测（自动检测采集的图片是否为真实人脸）
- * 使用 Human.js 的 liveness 检测能力
+ * @param {FaceResult} face - 人脸检测结果
  */
-async function performSilentLivenessDetection(): Promise<void> {
-  if (!detectionState.baselineImage) {
-    emitDebug('liveness', '没有捕获图片用于活体检测', {}, 'error')
-    // 设置错误颜色
-    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.CAPTURE_FAILED, message: '未能捕获图片，请重试' })
-    stopDetection()
-    return
-  }
-
-  if (!human) {
-    emitDebug('liveness', 'Human.js 未初始化', {}, 'error')
-    // 设置错误颜色
-    videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-    emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.ENGINE_NOT_INITIALIZED, message: 'AI 检测引擎未初始化，请稍后重试' })
-    stopDetection()
-    return
-  }
-
+async function performSilentLivenessDetection(face: FaceResult): Promise<void> {
   try {
-    emitDebug('liveness', '开始静默活体检测')
+    emitDebug('liveness', '开始静默活体检测当前帧')
     
-    // 创建临时图片对象用于 Human.js 检测
-    const tempImg = new Image()
+    // 根据 Human.js 的 FaceResult 类型定义：
+    // - real?: number  - face anti-spoofing result confidence [0-1] （反欺骗检测：真实人脸置信度）
+    // - live?: number  - face liveness result confidence [0-1] （活体检测：活体置信度）
+    // 
+    // 检测流程：
+    // 1. 先检查 real（反欺骗检测）- 判断是否为真实人脸（排除欺诈）
+    // 2. 如果是真实人脸，则使用 live（活体检测）- 进一步判断是否为活体
+
+    const info: LivenessDetectedData = {
+      real: face.real || -1,
+      live: face.live || -1
+    }
+    emit(FACE_DETECTOR_EVENTS.LIVENESS_DETECTED, info)
+        
+    let realScore = 0
+    let isFraudDetected = false
     
-    tempImg.onload = async () => {
-      try {
-        // 使用 Human.js 的检测功能分析采集的图片
-        // 如果用户提供了运行时配置，则使用；否则使用实例初始化时的配置
-        const runtimeConfig = Object.keys(props.humanConfig).length > 0 ? props.humanConfig : undefined
-        const result = await human!.detect(tempImg, runtimeConfig)
+    // 策略 1: 优先使用 real 属性进行反欺骗检测（排除欺诈）
+    if (face.real !== undefined && typeof face.real === 'number') {
+      emitDebug('liveness', '反欺骗检测结果', { real: face.real, threshold: CONFIG.LIVENESS.ANTI_SPOOFING_THRESHOLD })
+      
+      // 如果 real 分数低于反欺骗阈值，说明检测到欺诈
+      if (face.real < CONFIG.LIVENESS.ANTI_SPOOFING_THRESHOLD) {
+        isFraudDetected = true
+        realScore = face.real
+        emitDebug('liveness', '检测到欺诈行为', { score: face.real }, 'error')
+      } else {
+        // real 分数充分，继续检查 live
+        emitDebug('liveness', '反欺骗检测通过')
         
-        if (!result) {
-          emitDebug('liveness', 'Human.js 检测返回无结果', {}, 'warn')
-          // 设置错误颜色
-          videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-          emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.LIVENESS_ANALYSIS_FAILED, message: '活体检测失败，无法分析图片，请重试' })
-          stopDetection()
-          return
-        }
-
-        emitDebug('liveness', '检测完成', { faceCount: result.face?.length || 0 })
-
-        // 提取 liveness 检测结果
-        const faces = result.face || []
-        if (faces.length === 0) {
-          emitDebug('liveness', '图片中未检测到人脸', {}, 'warn')
-          // 设置错误颜色
-          videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-          emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.NO_FACE_IN_IMAGE, message: '未在图片中检测到人脸，请确保采集了清晰的人脸照片' })
-          stopDetection()
-          return
-        }
-
-        // 获取第一张脸的数据
-        const faceData = faces[0] as any
-        
-        // 检查图像质量 - 在进行活体检测前先验证采集图片的质量
-        const qualityCheck = checkFaceImageQuality(faceData, tempImg.width, tempImg.height)
-        if (!qualityCheck.passed) {
-          emitStatusPrompt(PromptCode.POOR_IMAGE_QUALITY, {quality: qualityCheck.score.toFixed(2) })
-          emitDebug('quality', '采集图片质量不足，重新采集', { 
-            score: qualityCheck.score.toFixed(2),
-            reasons: qualityCheck.reasons
-          }, 'warn')
-          // 重置并继续采集，寻找更清晰的帧
-          detectionState.baselineImage = null
-          detectionState.isSilentLivenessStarted = false
-          scheduleNextDetection()
-          return
-        }
-        
-        emitDebug('liveness', '人脸数据提取', { keys: Object.keys(faceData).slice(0, 10), live: faceData.live, real: faceData.real })
-        
-        // 根据 Human.js 的 FaceResult 类型定义：
-        // - real?: number  - face anti-spoofing result confidence [0-1] （反欺骗检测：真实人脸置信度）
-        // - live?: number  - face liveness result confidence [0-1] （活体检测：活体置信度）
-        // 
-        // 检测流程：
-        // 1. 先检查 real（反欺骗检测）- 判断是否为真实人脸（排除欺诈）
-        // 2. 如果是真实人脸，则使用 live（活体检测）- 进一步判断是否为活体
-
-        const info: LivenessDetectedData = {
-          real: faceData.real || -1,
-          live: faceData.live || -1
-        }
-        emit(FACE_DETECTOR_EVENTS.LIVENESS_DETECTED, info)
-        
-        let realScore = 0
-        let isFraudDetected = false
-        
-        // 策略 1: 优先使用 real 属性进行反欺骗检测（排除欺诈）
-        if (faceData.real !== undefined && typeof faceData.real === 'number') {
-          emitDebug('liveness', '反欺骗检测结果', { real: faceData.real, threshold: CONFIG.LIVENESS.ANTI_SPOOFING_THRESHOLD })
-          
-          // 如果 real 分数低于反欺骗阈值，说明检测到欺诈
-          if (faceData.real < CONFIG.LIVENESS.ANTI_SPOOFING_THRESHOLD) {
-            isFraudDetected = true
-            realScore = faceData.real
-            emitDebug('liveness', '检测到欺诈行为', { score: faceData.real }, 'error')
-          } else {
-            // real 分数充分，继续检查 live
-            emitDebug('liveness', '反欺骗检测通过')
-            
-            // 策略 2: 如果反欺骗检测通过，再用 live 属性进行活体检测
-            if (faceData.live !== undefined && typeof faceData.live === 'number') {
-              realScore = faceData.live
-              emitDebug('liveness', '使用 live 属性作为最终分数', { score: realScore })
-            } else {
-              // 如果没有 live，就用 real 作为最终分数
-              realScore = faceData.real
-              emitDebug('liveness', '无 live 属性，使用 real 作为最终分数', { score: realScore })
-            }
-          }
-        }
-        // 备选方案: 如果没有 real，尝试使用 live
-        else if (faceData.live !== undefined && typeof faceData.live === 'number') {
-          realScore = faceData.live
-          emitDebug('liveness', '使用 live 属性（无反欺骗检测）', { score: realScore })
-        }
-        // 都没有
-        else {
-          emitDebug('liveness', '无活体检测结果', { keys: Object.keys(faceData) }, 'warn')
-          // 设置错误颜色
-          videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-          emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.NO_LIVENESS_RESULT, message: '无法获取活体检测结果，请确保 liveness 或 antispoof 模型已正确加载' })
-          stopDetection()
-          return
-        }
-        
-        emitDebug('liveness', '活体分数提取', { score: realScore, isFraud: isFraudDetected })
-
-        // 判断是否通过活体检测
-        if (isFraudDetected) {
-          // 检测到欺诈，直接失败，不再继续检测
-          emitDebug('liveness', '活体检测失败 - 检测到欺诈', { score: realScore }, 'error')
-          videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-          emit(FACE_DETECTOR_EVENTS.ERROR, { 
-            code: ErrorCode.FRAUD_DETECTED, 
-            message: '检测到欺诈行为（可能是照片、视频或面具），请用真实人脸重试' 
-          })
-          stopDetection()
-        } else if (realScore >= props.silentLivenessThreshold) {
-          emitDebug('liveness', '活体检测成功', { score: realScore })
-          
-          // 设置成功颜色
-          videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
-          
-          // 发送成功事件
-          emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, {
-            imageData: detectionState.baselineImage,
-            liveness: realScore
-          })
-          
-          stopDetection(true)
+        // 策略 2: 如果反欺骗检测通过，再用 live 属性进行活体检测
+        if (face.live !== undefined && typeof face.live === 'number') {
+          realScore = face.live
+          emitDebug('liveness', '使用 live 属性作为最终分数', { score: realScore })
         } else {
-          emitDebug('liveness', '活体分数不足，继续检测', { score: realScore, threshold: props.silentLivenessThreshold })
-          // 分数不足时，继续检测，而不是报错
-          // 继续检测下一帧
-          scheduleNextDetection()
+          // 如果没有 live，就用 real 作为最终分数
+          realScore = face.real
+          emitDebug('liveness', '无 live 属性，使用 real 作为最终分数', { score: realScore })
         }
-      } catch (e) {
-        emitDebug('liveness', '活体分析出错', { error: (e as Error).message }, 'error')
-        // 设置错误颜色
-        videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-        emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.LIVENESS_DETECTION_FAILED, message: `活体检测出错: ${e instanceof Error ? e.message : '未知错误'}` })
-        stopDetection()
       }
     }
-
-    tempImg.onerror = () => {
-      emitDebug('liveness', '采集图片加载失败', {}, 'error')
+    // 备选方案: 如果没有 real，尝试使用 live
+    else if (face.live !== undefined && typeof face.live === 'number') {
+      realScore = face.live
+      emitDebug('liveness', '使用 live 属性（无反欺骗检测）', { score: realScore })
+    }
+    // 都没有
+    else {
+      emitDebug('liveness', '无活体检测结果', { keys: Object.keys(face) }, 'warn')
       // 设置错误颜色
       videoBorderColor.value = BORDER_COLOR_STATES.ERROR
-      emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.IMAGE_LOAD_FAILED, message: '无法加载采集的图片进行活体检测' })
+      emit(FACE_DETECTOR_EVENTS.ERROR, { code: ErrorCode.NO_LIVENESS_RESULT, message: '无法获取活体检测结果，请确保 liveness 或 antispoof 模型已正确加载' })
       stopDetection()
+      return
     }
+        
+    emitDebug('liveness', '活体分数提取', { score: realScore, isFraud: isFraudDetected })
 
-    // 加载采集的图片
-    tempImg.src = detectionState.baselineImage
+    // 判断是否通过活体检测
+    if (isFraudDetected) {
+      // 检测到欺诈，直接失败，不再继续检测
+      emitDebug('liveness', '活体检测失败 - 检测到欺诈', { score: realScore }, 'error')
+      videoBorderColor.value = BORDER_COLOR_STATES.ERROR
+      emit(FACE_DETECTOR_EVENTS.ERROR, { 
+        code: ErrorCode.FRAUD_DETECTED, 
+        message: '检测到欺诈行为（可能是照片、视频或面具），请用真实人脸重试' 
+      })
+      stopDetection()
+    } else if (realScore >= props.silentLivenessThreshold) {
+      emitDebug('liveness', '活体检测成功', { score: realScore })
+      const bestImage = detectionState.collectedImages.getBestItem()
+      if(!bestImage){
+        emitDebug('liveness', '无法选取最佳质量图片，采集列表为空', {}, 'error')
+        emit(FACE_DETECTOR_EVENTS.ERROR, { 
+          code: ErrorCode.DETECTION_ERROR, 
+          message: '采集图片列表为空，无法选取最佳图片。请重新尝试。' 
+        })
+        videoBorderColor.value = BORDER_COLOR_STATES.ERROR
+        stopDetection()
+        return
+      }
+      const bestScore = detectionState.collectedImages.getBestScore()
+      // 发送成功事件
+      emit(FACE_DETECTOR_EVENTS.LIVENESS_COMPLETED, {
+        qualityScore: bestScore,
+        imageData: bestImage,
+        liveness: realScore
+      })
+      // 设置成功颜色
+      videoBorderColor.value = BORDER_COLOR_STATES.SUCCESS
+      stopDetection(true)
+      
+    } else {
+      emitDebug('liveness', '活体分数不足，继续检测', { score: realScore, threshold: props.silentLivenessThreshold })
+      // 分数不足时，继续检测，而不是报错
+      // 继续检测下一帧
+      scheduleNextDetection()
+    }
   } catch (e) {
     emitDebug('liveness', '静默活体检测异常', { error: (e as Error).message }, 'error')
     // 设置错误颜色
