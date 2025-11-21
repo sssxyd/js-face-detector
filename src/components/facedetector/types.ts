@@ -184,6 +184,7 @@ export class ScoredList<T> {
 
   clear(): void {
     this.items = []
+    this.totalCount = 0
   }
 
   size(): number {
